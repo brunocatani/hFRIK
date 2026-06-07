@@ -52,7 +52,7 @@ namespace frik
         if (_notMoving && MatrixUtils::distanceNoSqrt2d(newPos.x - curPos.x, newPos.y - curPos.y, _lastAppliedLocalX, _lastAppliedLocalY) > 100) {
             _smoothedPos = curPos;
             playerLocalTransformPos.z = 0;
-            logger::sample("[SmoothMovement] Not moving values exceed normal; curPos:({:.2f}, {:.2f}), curPos:({:.2f}, {:.2f}), lastApplied:({:.2f}, {:.2f})",
+            logger::sampleDebug(1000, "[SmoothMovement] Not moving values exceed normal; curPos:({:.2f}, {:.2f}), curPos:({:.2f}, {:.2f}), lastApplied:({:.2f}, {:.2f})",
                 curPos.x, curPos.y, newPos.x, newPos.y, _lastAppliedLocalX, _lastAppliedLocalY);
         } else {
             playerLocalTransformPos = newPos - curPos;
@@ -83,7 +83,7 @@ namespace frik
 
         if (MatrixUtils::distanceNoSqrt(curPos, prevPos) > 4000000.0f) {
             // don't smooth if values are way off
-            logger::sample("[SmoothMovement] Values exceed normal; curPos:({:.2f}, {:.2f}, {:.2f}), SmoothPos:({:.2f}, {:.2f}, {:.2f})",
+            logger::sampleDebug(1000, "[SmoothMovement] Values exceed normal; curPos:({:.2f}, {:.2f}, {:.2f}), SmoothPos:({:.2f}, {:.2f}, {:.2f})",
                 curPos.x, curPos.y, curPos.z, prevPos.x, prevPos.y, prevPos.z);
             return curPos;
         }
@@ -99,7 +99,7 @@ namespace frik
             newPos.y = prevPos.y + _frameTime * ((curPos.y - prevPos.y) /
                 (g_config.smoothingAmountHorizontal * (g_config.dampingMultiplierHorizontal / absValY) * (_notMoving ? g_config.stoppingMultiplierHorizontal : 1.0f)));
         } else {
-            logger::sample("shouldn't be here!");
+            logger::sampleDebug(1000, "SmoothMovement reached disabled-smoothing branch unexpectedly");
         }
 
         // Don't smooth vertical movement if jumping or in air as it will break the jump

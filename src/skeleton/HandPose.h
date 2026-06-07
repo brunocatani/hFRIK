@@ -1,93 +1,132 @@
 #pragma once
 
-#include <map>
+#include "Skeleton.h"
+#include "api/FRIKApi.h"
+
+#include <algorithm>
+#include <array>
 #include <cstdint>
 #include <string>
-#include <string_view>
 #include <vector>
-
-#include "HandPoseData.h"
-#include "common/CommonUtils.h"
-#include "f4vr/BSFlattenedBoneTree.h"
 
 namespace frik
 {
-    class HandPose
+    extern std::map<std::string, RE::NiTransform, common::CaseInsensitiveComparator> handClosed;
+    extern std::map<std::string, RE::NiTransform, common::CaseInsensitiveComparator> handOpen;
+
+    extern std::map<std::string, float> handPapyrusPose;
+    extern std::map<std::string, bool> handPapyrusHasControl;
+    extern std::map<std::string, RE::NiTransform, common::CaseInsensitiveComparator> handLocalTransformOverride;
+    extern std::map<std::string, bool> handLocalTransformHasControl;
+    extern std::map<std::string, float, common::CaseInsensitiveComparator> handPoseSplay;
+    extern std::map<std::string, bool, common::CaseInsensitiveComparator> handPoseSplayHasControl;
+    extern std::array<float, 2> handPosePalmPitch;
+    extern std::array<float, 2> handPosePalmYaw;
+    extern std::array<bool, 2> handPosePalmHasControl;
+
+    void initHandPoses(bool inPowerArmor);
+
+    float getHandBonePose(const std::string& bone, const bool melee);
+
+    void setFingerPositionScalar(bool isLeft, float thumb, float index, float middle, float ring, float pinky);
+    void setFingerJointPositions(bool isLeft, const float values[15]);
+    void restoreFingerPoseControl(bool isLeft);
+    bool buildFingerLocalTransformsForJointPositions(bool isLeft, const float values[15], api::FRIKApi::FingerLocalTransformOverride& outTransforms);
+
+    void setPipboyHandPose();
+    void disablePipboyHandPose();
+    void setConfigModeHandPose();
+    void disableConfigModePose();
+
+    void setForceHandPointingPose(bool primaryHand, bool forcePointing);
+
+    void setOffhandGripHandPose(bool toSet);
+    void setAttaboyHandPose(bool toSet);
+    void setHandPoseOverride(bool override, bool rightHand, const float* handPose);
+
+    // --- Tag-based hand pose priority system ---
+
+    /// Known priority levels for internal and external systems.
+    /// Higher value = higher priority (wins when multiple tags are active).
+    namespace HandPosePriority
+    {
+        constexpr int Default = 0;         // Fallback / no override
+        constexpr int External = 50;       // External mods via API (default)
+        constexpr int ForcedExternal = 90; // Upstream compatibility forceTop=true, still below ROCK grab
+        constexpr int OffhandGrip = 60;    // FRIK offhand weapon grip
+        constexpr int Pipboy = 70;         // Pipboy pointing pose
+        constexpr int ConfigMode = 70;     // Config mode pointing pose
+        constexpr int Attaboy = 65;        // Attaboy pose
+        constexpr int PhysicsGrab = 100;   // ROCK physics grab
+    }
+
+    /// A single hand pose override entry in the priority stack.
+    struct HandPoseEntry
+    {
+        std::string tag;                           // Unique identifier (e.g., "ROCK_Grab", "Pipboy")
+        int priority = HandPosePriority::Default;  // Higher wins
+        std::uint64_t sequence = 0;                // Newer same-priority entries win
+        api::FRIKApi::HandPoseKind poseType = api::FRIKApi::HandPoseKind::Custom;
+        api::FRIKApi::HandPoseData poseData = {};
+        float fingers[5] = { 0, 0, 0, 0, 0 };    // thumb, index, middle, ring, pinky (0=bent, 1=straight)
+        float perBoneFingers[15] = {};             // Optional per-bone override (if set from raw float[15])
+        bool usesPerBone = false;                  // true = use perBoneFingers[15], false = use fingers[5]
+        bool usesFullPoseData = false;             // true = poseData carries caller-authored splay/palm data
+        bool hasScalarPose = true;                 // true = perBoneFingers controls the scalar open/closed blend
+        std::uint16_t localTransformMask = 0;       // Bit i enables localTransforms[i]
+        RE::NiTransform localTransforms[15] = {};   // Optional local transform overrides for selected finger bones
+    };
+
+    /// Manages a priority stack of hand pose overrides per hand.
+    /// Replaces the old global handPapyrusPose/handPapyrusHasControl approach.
+    class HandPoseManager
     {
     public:
-        explicit HandPose(bool inPowerArmor);
+        /// Set or update a tagged hand pose with 5-finger scalars.
+        bool setTaggedPose(const std::string& tag, bool isLeft, int priority,
+            api::FRIKApi::HandPoseKind poseType, float thumb, float index, float middle, float ring, float pinky);
 
-        static void setHandPoseOverride(bool isLeft, std::string_view tag, const HandFingersPose& pose, bool forceTop);
-        static void setHandPoseOverrideWithPriority(bool isLeft, std::string_view tag, const HandFingersPose& pose, int priority);
-        static void clearHandPoseOverride(bool isLeft, std::string_view tag);
-        static skeleton::data::HandPoseOverrideTagState getHandPoseSetTagState(bool isLeft, std::string_view tag);
-        static skeleton::data::HandPoseKind getCurrentHandPoseKind(bool isLeft);
-        static const HandFingersPose& getFixedPrimaryWeaponPose();
+        /// Set or update a tagged hand pose with a predefined pose enum.
+        bool setTaggedPose(const std::string& tag, bool isLeft, int priority, api::FRIKApi::HandPoseKind poseType);
 
-        static void setPipboyHandPose();
-        static void disablePipboyHandPose();
-        static void setConfigModeHandPose();
-        static void disableConfigModePose();
-        static void setForceHandPointingPose(bool primaryHand, bool forcePointing);
-        static void setOffhandGripHandPose(bool toSet);
-        static void setAttaboyHandPose(bool toSet);
+        /// Set or update a tagged full hand pose with per-joint curls, splay, and palm offsets.
+        bool setTaggedPoseCustom(const std::string& tag, bool isLeft, int priority,
+            const api::FRIKApi::HandPoseData& poseData,
+            api::FRIKApi::HandPoseKind poseType = api::FRIKApi::HandPoseKind::Custom);
 
-        void onFrameUpdate(RE::NiNode* root, float frameTime);
+        /// Set or update a tagged hand pose with raw per-bone float[15] array (internal use).
+        bool setTaggedPosePerBone(const std::string& tag, bool isLeft, int priority, const float* perBoneValues);
+
+        /// Set or update local finger-bone transform overrides for a tagged hand pose.
+        bool setTaggedPoseLocalTransforms(const std::string& tag, bool isLeft, int priority, const api::FRIKApi::FingerLocalTransformOverride& overrideData);
+
+        /// Remove a tagged hand pose override.
+        bool clearTaggedPose(const std::string& tag, bool isLeft);
+
+        /// Get the state of a specific tag.
+        api::FRIKApi::HandPoseTagState getTagState(const std::string& tag, bool isLeft) const;
+
+        /// Get the currently active (top priority) pose type.
+        api::FRIKApi::HandPoseKind getCurrentPose(bool isLeft) const;
+
+        /// Check if any override is active for a hand.
+        bool hasActiveOverride(bool isLeft) const;
 
     private:
-        enum class HandPoseSourceKind : uint8_t
-        {
-            // Default controller-driven finger curl, with no authored palm pose.
-            Dynamic,
-            // Explicit or implicit authored pose, such as mod overrides or thumbs-up.
-            OverridePose,
-            // Weapon-driven hand source. This may carry an authored pose pointer, or a null pose
-            // to indicate the right-handed path should copy the first-person hand transform.
-            PrimaryWeaponPose
-        };
+        /// Apply the top-priority entry to the legacy global maps (handPapyrusPose/handPapyrusHasControl).
+        void applyTopEntry(bool isLeft);
 
-        struct HandPoseSource
-        {
-            HandPoseSourceKind kind = HandPoseSourceKind::Dynamic;
-            // Present only when the source is backed by authored pose data.
-            const HandFingersPose* pose = nullptr;
-        };
+        /// Clear the legacy global maps for a hand.
+        void clearLegacyMaps(bool isLeft);
 
-        struct TaggedHandPoseOverride
-        {
-            std::string tag;
-            HandFingersPose pose;
-            int priority = 50;
-            std::uint64_t sequence = 0;
-        };
+        /// Convert a predefined pose enum to per-bone float[15] values.
+        static const api::FRIKApi::HandPoseData* getPredefinedPoseData(api::FRIKApi::HandPoseKind pose);
 
-        struct PalmBlendState
-        {
-            float pitch = 0.0f; // degrees
-            float yaw = 0.0f; // degrees
-        };
-
-        static HandPoseSource resolveHandPoseSource(bool isLeft);
-        static void applyPalmPose(f4cf::f4vr::BSFlattenedBoneTree* boneTree, bool isLeft, const HandPoseSource& source, PalmBlendState& blendState, float frameTime);
-        void applyPrimaryWeaponHandPose(const std::string& boneName, const HandPoseSource& source);
-        void applyDynamicHandPose(const std::string& boneName, float frameTime);
-        void applyOverrideHandPose(const std::string& boneName, const HandFingersPose* activePose, float frameTime);
-        void blendBoneTowardRotation(const std::string& boneName, const RE::NiMatrix3& targetRotation, float frameTime);
-        RE::NiMatrix3 getPoseBoneRotation(const std::string& boneName, const HandFingersPose& pose) const;
-        RE::NiMatrix3 blendBoneRotation(const std::string& boneName, float flex, float splay) const;
-        static bool shouldUseThumbsUpPose(bool isLeft);
-        static void setHandPoseOverrideIntr(bool isLeft, std::string_view tag, const HandFingersPose& pose, int priority);
-        static void clearHandPoseOverrideIntr(bool isLeft, std::string_view tag);
-        static std::vector<TaggedHandPoseOverride>& getHandOverrides(bool isLeft);
-        static const TaggedHandPoseOverride* getActiveHandPoseOverride(bool isLeft);
-
-        std::map<std::string, RE::NiTransform> _handClosed;
-        std::map<std::string, RE::NiTransform> _handOpen;
-        std::map<std::string, RE::NiTransform> _handBones;
-        PalmBlendState _leftPalmBlend;
-        PalmBlendState _rightPalmBlend;
-        inline static std::vector<TaggedHandPoseOverride> _leftHandOverrides;
-        inline static std::vector<TaggedHandPoseOverride> _rightHandOverrides;
-        inline static std::uint64_t _nextOverrideSequence = 0;
+        // Per-hand stacks: [0] = right, [1] = left. Sorted by priority descending.
+        std::vector<HandPoseEntry> _stacks[2];
+        std::uint64_t _nextSequence = 0;
     };
+
+    /// Global hand pose manager instance.
+    inline HandPoseManager g_handPoseManager;
 }

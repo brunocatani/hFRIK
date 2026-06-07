@@ -102,9 +102,9 @@ namespace frik
         _isOperatingPipboy = isOperating;
 
         if (_isOperatingPipboy) {
-            HandPose::setPipboyHandPose();
+            setPipboyHandPose();
         } else {
-            HandPose::disablePipboyHandPose();
+            disablePipboyHandPose();
             // Remove any stuck helper orbs if Pipboy times out for any reason.
             const auto arm = getPipboyArmNode();
             for (const auto& orbIdx : ORBS_NAMES) {

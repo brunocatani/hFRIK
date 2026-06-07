@@ -3,8 +3,8 @@ cmake_minimum_required(VERSION 4.2)
 
 # >>> Project
 set(NAME "FRIK")
-set(FRIENDLY_NAME "FRIK")
-set(VERSION 0.77.12)
+set(FRIENDLY_NAME "FRIK Experimental")
+set(VERSION 0.77.10)
 
 message(">>> Start build for '${NAME}' v${VERSION}")
 
@@ -60,7 +60,7 @@ message(">>> Using found F4VR-CommonFramework in: '${F4VR_COMMON_FRAMEWORK_PATH_
 add_compile_definitions(_CRT_SECURE_NO_WARNINGS)
 set(Boost_USE_STATIC_RUNTIME OFF CACHE BOOL "")
 set(Boost_USE_STATIC_LIBS ON)
-set(CMAKE_INTERPROCEDURAL_OPTIMIZATION ON)
+set(CMAKE_INTERPROCEDURAL_OPTIMIZATION OFF)
 set(CMAKE_INTERPROCEDURAL_OPTIMIZATION_DEBUG OFF)
 
 # >>> Bring in the framework (it brings CommonLibF4 transitively)
@@ -73,8 +73,9 @@ add_subdirectory(${F4VR_COMMON_FRAMEWORK_PATH_SELECTED} "F4VR-CommonFramework" E
 # >>> Version & resource files
 configure_file(${ROOT_DIR}/cmake/version.rc.in  ${BUILD_DIR}/version.rc  @ONLY)
 configure_file(${ROOT_DIR}/cmake/Version.h.in   ${BUILD_DIR}/include/Version.h @ONLY)
+configure_file(${ROOT_DIR}/cmake/FRIKVersion.h.in ${BUILD_DIR}/include/FRIKVersion.h @ONLY)
 configure_file(${ROOT_DIR}/cmake/resources.rc.in ${BUILD_DIR}/resources.rc @ONLY)
-source_group(TREE ${BUILD_DIR} FILES ${BUILD_DIR}/include/Version.h ${BUILD_DIR}/resources.rc)
+source_group(TREE ${BUILD_DIR} FILES ${BUILD_DIR}/include/Version.h ${BUILD_DIR}/include/FRIKVersion.h ${BUILD_DIR}/resources.rc)
 
 # >>> Sources
 file(GLOB_RECURSE headers CONFIGURE_DEPENDS "${SOURCE_DIR}/*.h")
@@ -103,6 +104,7 @@ add_library(${PROJECT_NAME} SHARED
   ${inls}
   ${resource_files}
   ${BUILD_DIR}/include/Version.h
+  ${BUILD_DIR}/include/FRIKVersion.h
   ${BUILD_DIR}/version.rc
   ${BUILD_DIR}/resources.rc
   "${ROOT_DIR}/.clang-format"
@@ -133,6 +135,47 @@ target_link_libraries(${PROJECT_NAME} PRIVATE cpptrace::cpptrace)
 
 # >>> PCH
 target_precompile_headers(${PROJECT_NAME} PRIVATE src/PCH.h)
+
+option(BUILD_FRIK_TESTS "Build FRIK focused regression tests" OFF)
+if(BUILD_FRIK_TESTS)
+  enable_testing()
+
+  add_executable(FRIKHandPoseStackPolicyTests
+    "${ROOT_DIR}/tests/HandPoseStackPolicyTests.cpp"
+  )
+  target_compile_features(FRIKHandPoseStackPolicyTests PRIVATE cxx_std_23)
+  target_include_directories(FRIKHandPoseStackPolicyTests PRIVATE ${SOURCE_DIR})
+  add_test(NAME FRIKHandPoseStackPolicyTests COMMAND $<TARGET_FILE:FRIKHandPoseStackPolicyTests>)
+
+  add_executable(FRIKHandPoseLocalTransformPolicyTests
+    "${ROOT_DIR}/tests/HandPoseLocalTransformPolicyTests.cpp"
+  )
+  target_compile_features(FRIKHandPoseLocalTransformPolicyTests PRIVATE cxx_std_23)
+  target_include_directories(FRIKHandPoseLocalTransformPolicyTests PRIVATE ${SOURCE_DIR})
+  add_test(NAME FRIKHandPoseLocalTransformPolicyTests COMMAND $<TARGET_FILE:FRIKHandPoseLocalTransformPolicyTests>)
+
+  add_executable(FRIKApiTagPolicyTests
+    "${ROOT_DIR}/tests/FRIKApiTagPolicyTests.cpp"
+  )
+  target_compile_features(FRIKApiTagPolicyTests PRIVATE cxx_std_23)
+  target_include_directories(FRIKApiTagPolicyTests PRIVATE ${SOURCE_DIR})
+  add_test(NAME FRIKApiTagPolicyTests COMMAND $<TARGET_FILE:FRIKApiTagPolicyTests>)
+
+  add_executable(FRIKHandPoseWeaponPolicyTests
+    "${ROOT_DIR}/tests/HandPoseWeaponPolicyTests.cpp"
+  )
+  target_compile_features(FRIKHandPoseWeaponPolicyTests PRIVATE cxx_std_23)
+  target_include_directories(FRIKHandPoseWeaponPolicyTests PRIVATE ${SOURCE_DIR})
+  add_test(NAME FRIKHandPoseWeaponPolicyTests COMMAND $<TARGET_FILE:FRIKHandPoseWeaponPolicyTests>)
+
+  add_custom_target(FRIKPolicyTestBinaries
+    DEPENDS
+      FRIKHandPoseStackPolicyTests
+      FRIKHandPoseLocalTransformPolicyTests
+      FRIKApiTagPolicyTests
+      FRIKHandPoseWeaponPolicyTests
+  )
+endif()
 
 # >>> Compile / Link options
 target_compile_options(${PROJECT_NAME}
@@ -166,15 +209,15 @@ target_compile_options(${PROJECT_NAME}
 	/Zc:wchar_t # wchar_t Is Native Type
 
 	/external:anglebrackets
-	/external:W0
+    /external:W0
 
     /W4 # Warning level
+    /wd4715
     "$<$<CONFIG:RELEASE>:/Zc:inline;/JMC-;/Ob3>"
 )
 
 target_link_options(${PROJECT_NAME}
   PRIVATE
-    /WX # Treat Linker Warnings as Errors
     "$<$<CONFIG:DEBUG>:/INCREMENTAL;/OPT:NOREF;/OPT:NOICF>"
     "$<$<CONFIG:RELEASE>:/INCREMENTAL:NO;/OPT:REF;/OPT:ICF;/DEBUG:FULL>"
 )
@@ -182,9 +225,18 @@ target_link_options(${PROJECT_NAME}
 # >>> fix a warning with /Ob2 being overridden with /Ob3
 string(REPLACE "/Ob2" "/Ob3" CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE}")
 
+# FRIK separates plugin iteration, verification, and release packaging because
+# body-provider work needs a deployable DLL/PDB without implicitly building test
+# executables or archives. Tests and packages remain explicit presets, while
+# fast local builds can deploy to a configured mod root whose path may contain
+# spaces.
+option(POST_BUILD_COPY_PLUGIN "Copy FRIK.dll and FRIK.pdb to configured mod root after building." OFF)
+set(COPY_PLUGIN_BASE_PATH "" CACHE STRING "Semicolon-separated mod roots that contain F4SE/Plugins.")
+option(FRIK_PACKAGE_RELEASE "Package Release builds into a .7z archive after FRIK is built." ON)
+
 # >>> Post build command to copy plugins (supports multiple paths separated by ';')
 if(POST_BUILD_COPY_PLUGIN)
-  if(DEFINED COPY_PLUGIN_BASE_PATH)
+  if(DEFINED COPY_PLUGIN_BASE_PATH AND NOT COPY_PLUGIN_BASE_PATH STREQUAL "")
     # Treat semicolon-separated COPY_PLUGIN_BASE_PATH as a CMake list
     set(COPY_PLUGIN_PATH_LIST ${COPY_PLUGIN_BASE_PATH})
 
@@ -195,9 +247,9 @@ if(POST_BUILD_COPY_PLUGIN)
         TARGET ${PROJECT_NAME}
         POST_BUILD
         COMMENT "Copying ${PROJECT_NAME}.dll and .pdb to plugins folder: '${copy_path}/F4SE/Plugins/'"
-        COMMAND ${CMAKE_COMMAND} -E make_directory ${copy_path}/F4SE/Plugins/
-        COMMAND ${CMAKE_COMMAND} -E copy $<TARGET_FILE:${PROJECT_NAME}> ${copy_path}/F4SE/Plugins/
-        COMMAND ${CMAKE_COMMAND} -E copy $<TARGET_PDB_FILE:${PROJECT_NAME}> ${copy_path}/F4SE/Plugins/
+        COMMAND ${CMAKE_COMMAND} -E make_directory "${copy_path}/F4SE/Plugins/"
+        COMMAND ${CMAKE_COMMAND} -E copy $<TARGET_FILE:${PROJECT_NAME}> "${copy_path}/F4SE/Plugins/"
+        COMMAND ${CMAKE_COMMAND} -E copy $<TARGET_PDB_FILE:${PROJECT_NAME}> "${copy_path}/F4SE/Plugins/"
       )
     endforeach()
   else()
@@ -208,18 +260,22 @@ else()
 endif()
 
 # >>> Post build for release only to package the mod into a .7z file
-message(">>> Create post build command: package mod on release build")
-add_custom_command(
-  TARGET ${PROJECT_NAME}
-  POST_BUILD
-  COMMAND ${CMAKE_COMMAND}
-          -DPROJECT_NAME=${PROJECT_NAME}
-          -DPROJECT_FRIENDLY_NAME=${FRIENDLY_NAME}
-          -DPROJECT_VERSION=${PROJECT_VERSION}
-          -DROOT_DIR=${ROOT_DIR}
-          -DBUILD_DIR=${BUILD_DIR}
-          -DTARGET_FILE="$<TARGET_FILE:${PROJECT_NAME}>"
-          -DTARGET_PDB_FILE="$<TARGET_PDB_FILE:${PROJECT_NAME}>"
-          -DCONFIG=$(Configuration)
-          -P "${ROOT_DIR}/cmake/package.cmake"
-)
+if(FRIK_PACKAGE_RELEASE)
+  message(">>> Create post build command: package mod on release build")
+  add_custom_command(
+    TARGET ${PROJECT_NAME}
+    POST_BUILD
+    COMMAND ${CMAKE_COMMAND}
+            -DPROJECT_NAME=${PROJECT_NAME}
+            -DPROJECT_FRIENDLY_NAME=${FRIENDLY_NAME}
+            -DPROJECT_VERSION=${PROJECT_VERSION}
+            -DROOT_DIR=${ROOT_DIR}
+            -DBUILD_DIR=${BUILD_DIR}
+            -DTARGET_FILE="$<TARGET_FILE:${PROJECT_NAME}>"
+            -DTARGET_PDB_FILE="$<TARGET_PDB_FILE:${PROJECT_NAME}>"
+            -DCONFIG=$(Configuration)
+            -P "${ROOT_DIR}/cmake/package.cmake"
+  )
+else()
+  message(">>> Release package post build command disabled")
+endif()

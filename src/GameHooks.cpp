@@ -11,14 +11,14 @@ namespace
     {
         const auto player = f4vr::getPlayer();
         f4vr::Actor_ReEquipAll(player);
-        f4vr::AIProcess_Set3DUpdateFlags(player->currentProcess, 0x520);
+        f4vr::AIProcess_Set3DUpdateFlags(player->middleProcess, 0x520);
     }
 
     void fixPA3DEnter(const std::uint64_t rcx, const std::uint64_t rdx)
     {
         const auto player = f4vr::getPlayer();
         f4vr::ExtraData_SetMultiBoundRef(rcx, rdx);
-        f4vr::AIProcess_Set3DUpdateFlags(player->currentProcess, 0x520);
+        f4vr::AIProcess_Set3DUpdateFlags(player->middleProcess, 0x520);
     }
 
     // renderer stuff
@@ -46,9 +46,9 @@ namespace
     {
         const auto player = f4vr::getPlayer();
         const auto playerCamera = f4vr::getPlayerCamera();
-        if (player && playerCamera && playerCamera->cameraRoot && player->loadedData && player->loadedData->data3D) {
-            const auto body = player->loadedData->data3D.get();
-            const auto& cameraPos = playerCamera->cameraRoot->world.translate;
+        if (player && playerCamera && playerCamera->cameraNode && player->unkF0 && player->unkF0->rootNode) {
+            const auto body = player->unkF0->rootNode;
+            const auto& cameraPos = playerCamera->cameraNode->world.translate;
             body->local.translate.x = cameraPos.x;
             body->local.translate.y = cameraPos.y;
             body->world.translate.x = cameraPos.x;
@@ -241,10 +241,6 @@ namespace frik::hook
 // trampoline.write_call<5>(hookEndUpdate.address(), (uintptr_t)&hookIt);
 // trampoline.write_call<5>(hookMainDrawCandidate.address(), (uintptr_t)&hook2);
 // trampoline.write_call<5>(hookMultiBoundCulling.address(), (uintptr_t)&hook4);
-// trampoline.write_call<5>(hookActor_GetCurrentWeaponForGunReload.address(), &gunReloadInit);
-
-// gun reload animation hook
-// trampoline.write_call<5>(hookActor_SetupAnimationUpdateDataForRefernce.address(), &updatePlayerAnimationHook);
 //  logger::info("hooking main loop function");
 //  trampoline.write_call<5>(hookMainLoopFunc.address(), (uintptr_t)updateCounter);
 //  logger::info("successfully hooked main loop");
@@ -315,21 +311,6 @@ namespace frik::hook
 //     hookMultiBoundCullingFunc();
 // }
 
-// // Gun Reload Init
-// uint64_t gunReloadInit(const uint64_t rcx, const uint64_t rdx, const uint64_t r8)
-// {
-//     // frik::g_gunReloadSystem->startAnimationCapture();
-//     return Actor_GetCurrentWeapon(rcx, rdx, r8);
-// }
-
-// uint64_t updatePlayerAnimationHook(const uint64_t rcx, float* rdx)
-// {
-//     // Use in gun reload
-//     // if (frik::g_animDeltaTime >= 0.0f) {
-//     //     rdx[0] = frik::g_animDeltaTime;
-//     // }
-//     return TESObjectREFR_SetupAnimationUpdateDataForRefernce(rcx, rdx);
-// }
 
 // OLD CODE that was always commented out
 // static void patchTimeOut()

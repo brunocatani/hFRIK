@@ -17,6 +17,17 @@ namespace frik
 
         void onFrameUpdate();
 
+        // --- ROCK integration getters ---
+
+        /// Get the current smoothed player position (for player-space simulation)
+        RE::NiPoint3 getSmoothedPosition() const { return _smoothedPos; }
+
+        /// Whether the player is currently stationary (optimization hint)
+        bool isMoving() const { return !_notMoving; }
+
+        /// Get the per-frame time delta used by smooth movement
+        float getFrameTime() const { return _frameTime; }
+
     private:
         RE::NiPoint3 smoothedValue(const RE::NiPoint3& curPos, const RE::NiPoint3& prevPos);
 

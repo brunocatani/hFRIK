@@ -8,6 +8,8 @@
 #include "skeleton/HandPose.h"
 #include "skeleton/Skeleton.h"
 
+#include <algorithm>
+
 using namespace common;
 
 namespace frik
@@ -20,6 +22,7 @@ namespace frik
         "PB-MainTitle", "PB-Tile07", "PB-Tile03", "PB-Tile08", "PB-Tile02", "PB-Tile01", "PB-Tile04", "PB-Tile05", "PB-Tile06", "PB-Tile09", "PB-Tile10",
         "PB-Tile11"
     };
+    constexpr float PIPBOY_CONFIG_MODE_HOLD_SECONDS = 2.2f;
 
     /**
      * Open Pipboy configuration mode which also requires Pipboy to be open.
@@ -41,7 +44,7 @@ namespace frik
                 PBConfigUI->local.scale = 0;
                 PBConfigUI->parent->DetachChild(PBConfigUI);
             }
-            HandPose::disableConfigModePose();
+            disableConfigModePose();
             _isPBConfigModeActive = false;
 
             // restore pipboy scale if it was changed
@@ -91,16 +94,16 @@ namespace frik
         }
         // Enter Pipboy Config Mode by holding down favorites button.
         if (PBConfigButtonPressed && !_isPBConfigModeActive) {
-            // TODO: change from counter to timer so it will be fps independent
-            _PBConfigModeEnterCounter += 1;
-            if (f4vr::isPipboyOnWrist() && _PBConfigModeEnterCounter > 200 && g_frik.isPipboyOn()) {
+            const float frameTime = std::clamp(g_frik.getSmoothMovement().getFrameTime(), 1.0f / 144.0f, 1.0f / 30.0f);
+            _pipboyConfigModeEnterSeconds += frameTime;
+            if (_pipboyConfigModeEnterSeconds >= PIPBOY_CONFIG_MODE_HOLD_SECONDS) {
                 enterPipboyConfigMode();
             }
         } else if (!PBConfigButtonPressed && !_isPBConfigModeActive) {
-            _PBConfigModeEnterCounter = 0;
+            _pipboyConfigModeEnterSeconds = 0.0f;
         }
         if (_isPBConfigModeActive) {
-            HandPose::setConfigModeHandPose();
+            setConfigModeHandPose();
 
             const auto finger = f4vr::Skelly::getBoneWorldTransform(f4vr::isLeftHandedMode() ? "RArm_Finger23" : "LArm_Finger23").translate;
             for (int i = 1; i <= 11; i++) {
@@ -312,6 +315,6 @@ namespace frik
             }
         }
         _isPBConfigModeActive = true;
-        _PBConfigModeEnterCounter = 0;
+        _pipboyConfigModeEnterSeconds = 0.0f;
     }
 }

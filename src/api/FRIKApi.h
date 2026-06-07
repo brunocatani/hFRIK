@@ -1,9 +1,6 @@
 #pragma once
 
-#include <array>
 #include <cstdint>
-#include <span>
-#include <type_traits>
 #include <Windows.h>
 
 #include "RE/NetImmerse/NiPoint.h"
@@ -69,8 +66,9 @@ namespace frik::api
         };
 
         /**
-         * Predefined hand pose kinds exposed by the FRIK API.
-         * Matches FRIK runtime hand pose kinds.
+         * Predefined hand poses.
+         * Values 0..7 match the upstream FRIK API v4 contract. hFRIK-specific
+         * values are appended so upstream callers do not get remapped poses.
          */
         enum class HandPoseKind : std::uint8_t
         {
@@ -85,12 +83,12 @@ namespace frik::api
             Attaboy = 6,
             ThumbsUp = 7,
 
-            // API v5 additions are appended to preserve v4 enum values.
             Fist = 8,
             HoldingGun = 9,
             HoldingMelee = 10,
         };
 
+        // Kept as a low-churn compatibility alias for current ROCK/hFRIK source.
         using HandPoses = HandPoseKind;
 
         /**
@@ -106,20 +104,9 @@ namespace frik::api
 
         /**
          * Full pose data for one hand, including per-joint finger values and palm motion.
-         *
-         * Canonical float layout (22 floats, used by fromFloats / toFloats / asFloatView):
-         *   [0..3]   thumb  { prox, mid, dist, splay }
-         *   [4..7]   index  { prox, mid, dist, splay }
-         *   [8..11]  middle { prox, mid, dist, splay }
-         *   [12..15] ring   { prox, mid, dist, splay }
-         *   [16..19] pinky  { prox, mid, dist, splay }
-         *   [20]     palmPitch
-         *   [21]     palmYaw
          */
         struct HandPoseData
         {
-            static constexpr std::size_t FLOAT_COUNT = 22;
-
             FingerPoseData thumb;
             FingerPoseData index;
             FingerPoseData middle;
@@ -127,58 +114,7 @@ namespace frik::api
             FingerPoseData pinky;
             float palmPitch = 0.0f;
             float palmYaw = 0.0f;
-
-            /**
-             * Build a HandPoseData from the canonical 22-float packed layout.
-             */
-            static HandPoseData fromFloats(std::span<const float, FLOAT_COUNT> v)
-            {
-                return HandPoseData{
-                    .thumb = { v[0], v[1], v[2], v[3] },
-                    .index = { v[4], v[5], v[6], v[7] },
-                    .middle = { v[8], v[9], v[10], v[11] },
-                    .ring = { v[12], v[13], v[14], v[15] },
-                    .pinky = { v[16], v[17], v[18], v[19] },
-                    .palmPitch = v[20],
-                    .palmYaw = v[21],
-                };
-            }
-
-            /**
-             * Copy this pose into the canonical 22-float packed layout.
-             */
-            std::array<float, FLOAT_COUNT> toFloats() const
-            {
-                return {
-                    thumb.prox, thumb.mid, thumb.dist, thumb.splay,
-                    index.prox, index.mid, index.dist, index.splay,
-                    middle.prox, middle.mid, middle.dist, middle.splay,
-                    ring.prox, ring.mid, ring.dist, ring.splay,
-                    pinky.prox, pinky.mid, pinky.dist, pinky.splay,
-                    palmPitch, palmYaw
-                };
-            }
-
-            /**
-             * Zero-copy view of this pose as the canonical 22-float packed layout.
-             * The struct's standard-layout / no-padding contract is enforced by static_assert below,
-             * so this aliases directly onto the member fields with no copy.
-             */
-            std::span<const float, FLOAT_COUNT> asFloatView() const
-            {
-                return std::span<const float, FLOAT_COUNT>(reinterpret_cast<const float*>(this), FLOAT_COUNT);
-            }
-
-            std::span<float, FLOAT_COUNT> asFloatView()
-            {
-                return std::span<float, FLOAT_COUNT>(reinterpret_cast<float*>(this), FLOAT_COUNT);
-            }
         };
-
-        static_assert(std::is_standard_layout_v<HandPoseData>,
-            "HandPoseData must be standard-layout for asFloatView() to alias safely");
-        static_assert(sizeof(HandPoseData) == HandPoseData::FLOAT_COUNT * sizeof(float),
-            "HandPoseData must be tightly packed (22 contiguous floats, no padding)");
 
         /**
          * The potential state of a set hand pose for specific tag as returned from FRIK.
@@ -205,8 +141,9 @@ namespace frik::api
 
         /**
          * Optional per-finger-bone local transform overrides.
-         * API v5 keeps this struct in the table ABI so clients compiled against
-         * hFRIK v5 can detect whether local-transform callbacks are present.
+         * Bit i in enabledMask controls localTransforms[i], using the same
+         * 15-bone order as setHandPoseCustomJointPositionsWithPriority:
+         * thumb 11/12/13, index 21/22/23, middle 31/32/33, ring 41/42/43, pinky 51/52/53.
          */
         struct FingerLocalTransformOverride
         {
@@ -215,96 +152,99 @@ namespace frik::api
             RE::NiTransform localTransforms[15] = {};
         };
 
-        /**
-         * FRIK lifecycle event message types dispatched on the "F4VRBody" F4SE channel.
-         */
+        // -----------------------------------------------------------------
+        // FRIK lifecycle event message types.
+        // Dispatched via F4SE messaging on channel "F4VRBody".
+        // Listen with: _messaging->RegisterListener(callback, FRIKApi::FRIK_F4SE_MOD_NAME);
+        // -----------------------------------------------------------------
         enum class LifecycleEvent : std::uint32_t
         {
+            /// Fired AFTER skeleton is fully initialized.
+            /// Consumers that own physics/world state must still gate creation on their
+            /// own frame, menu, and world-readiness checks.
+            /// Data: nullptr. Dispatched synchronously from FRIK's initSkeleton().
             kSkeletonReady = 100,
+
+            /// Fired BEFORE skeleton teardown begins (must destroy physics bodies NOW).
+            /// Data: nullptr. Dispatched synchronously from FRIK's releaseSkeleton().
+            /// The skeleton is still valid when this fires — it will be deleted after
+            /// all listeners return.
             kSkeletonDestroying = 101,
+
+            /// Fired when power armor state changes (enter or exit).
+            /// Data: bool* pointing to the new isInPowerArmor state.
+            /// NOTE: This always fires AFTER kSkeletonDestroying + kSkeletonReady pair,
+            /// since PA transitions trigger skeleton recreation. Provided for state queries
+            /// by mods that don't track skeleton lifecycle but need PA awareness.
             kPowerArmorChanged = 102,
         };
 
         /**
-         * Supported since FRIK API v1.
          * Get the API version number.
          * Use this to check compatibility before calling other functions.
          */
         std::uint32_t (FRIK_CALL*getVersion)();
 
         /**
-         * Supported since FRIK API v2.
          * Get the mod version string. i.e. "0.12.5"
          */
         const char* (FRIK_CALL*getModVersion)();
 
         /**
-         * Supported since FRIK API v1.
          * Check if FRIK is ready and the skeleton is initialized.
          */
         bool (FRIK_CALL*isSkeletonReady)();
 
         /**
-         * Supported since FRIK API v2.
          * Is any of the FRIK config UI is open (main, Pipboy, weapon adjustment)
          */
         bool (FRIK_CALL*isConfigOpen)();
 
         /**
-         * Supported since FRIK API v2.
          * Is FRIK selfie mode is currently on or off.
          */
         bool (FRIK_CALL*isSelfieModeOn)();
 
         /**
-         * Supported since FRIK API v2.
          * Set FRIK selfie mode on or off.
          */
         void (FRIK_CALL*setSelfieModeOn)(bool setOn);
 
         /**
-         * Supported since FRIK API v2.
          * Is the player currently holding the weapon with two hands. i.e. offhand is holding the weapon.
          */
         bool (FRIK_CALL*isOffHandGrippingWeapon)();
 
         /**
-         * Supported since FRIK API v2.
          * Is the player currently have the FRIK Pipboy open.
          */
         bool (FRIK_CALL*isWristPipboyOpen)();
 
         /**
-         * Supported since FRIK API v1.
          * Get the world position of the index fingertip .
          */
         RE::NiPoint3 (FRIK_CALL*getIndexFingerTipPosition)(Hand hand);
 
         /**
-         * Supported since FRIK API v2.
          * Get the current state of given hand pose tag to identify if it is active in FRIK.
          * Can be used to identify if another system overriding the hand pose and your mod should react accordingly.
          */
         HandPoseTagState (FRIK_CALL*getHandPoseSetTagState)(const char* tag, Hand hand);
 
         /**
-         * Supported since FRIK API v2.
          * Get the current hand pose as active in FRIK.
-         * Uses the canonical API HandPoseKind values since FRIK API v4.
          */
         HandPoseKind (FRIK_CALL*getCurrentHandPose)(Hand hand);
 
         /**
-         * Supported since FRIK API v2.
-         * Set a predefined hand pose override.
+         * Set a hand pose override to specific values for each finger.
          * Use the tag to unique identify different systems using hand pose overrides.
-         * Use setHandPoseCustomFingerPositions for Custom.
+         * Each value is between 0 and 1 where 0 is bent and 1 is straight.
          * @return true if successful.
          */
         bool (FRIK_CALL*setHandPose)(const char* tag, Hand hand, HandPoseKind handPose);
 
         /**
-         * Supported since FRIK API v2.
          * Set a hand pose override to specific values for each finger.
          * Use the tag to unique identify different systems using hand pose overrides.
          * Each value is between 0 and 1 where 0 is bent and 1 is straight.
@@ -313,7 +253,6 @@ namespace frik::api
         bool (FRIK_CALL*setHandPoseCustomFingerPositions)(const char* tag, Hand hand, float thumb, float index, float middle, float ring, float pinky);
 
         /**
-         * Supported since FRIK API v2.
          * Clear the set values in "setHandPoseFingerPositions" for FRIK to have control over the hand pose.
          * Only clears the specific tag hand pose override.
          * @return true if successful.
@@ -321,27 +260,21 @@ namespace frik::api
         bool (FRIK_CALL*clearHandPose)(const char* tag, Hand hand);
 
         /**
-         * Supported since FRIK API v1.
-         * Deprecated since FRIK API v2.
          * @deprecated Use setHandPoseCustomFingerPositions instead.
          */
         void (FRIK_CALL*setHandPoseFingerPositions)(Hand hand, float thumb, float index, float middle, float ring, float pinky);
 
         /**
-         * Supported since FRIK API v1.
-         * Deprecated since FRIK API v2.
          * @deprecated Use clearHandPose instead.
          */
         void (FRIK_CALL*clearHandPoseFingerPositions)(Hand hand);
 
         /**
-         * Supported since FRIK API v2.
          * Adds a button to open external mod config via a button in FRIK main config UI.
          */
         bool (FRIK_CALL*registerOpenModSettingButtonToMainConfig)(const OpenExternalModConfigData& data);
 
         /**
-         * Supported since FRIK API v3.
          * Enable/disable FRIK offhand weapon gripping for a specific tag.
          * The tag must be unique per external system using this API.
          * FRIK keeps only the blocked state, so gripping remains disabled while any tag is blocking it.
@@ -350,62 +283,68 @@ namespace frik::api
         bool (FRIK_CALL*blockOffHandWeaponGripping)(const char* tag, bool block);
 
         /**
-         * Supported since FRIK API v4.
          * Set a full hand pose override with per-joint finger values, per-finger splay, and palm motion.
-         * Use the tag to uniquely identify different systems using hand pose overrides.
-         * Avoid using forceTop=true as it may thrash with internal FRIK logic, provided here as extreme use-case option.
          * Use clearHandPose to release the override.
-         * @return true if successful.
+         * forceTop maps to FRIK's forced external compatibility priority.
          */
         bool (FRIK_CALL*setHandPoseCustom)(const char* tag, Hand hand, const HandPoseData& handPose, bool forceTop);
 
         /**
-         * Supported since FRIK API v5.
-         * Set a predefined hand pose override with explicit priority.
-         * Higher priority wins; same-priority updates use newest-wins ordering.
+         * Set a hand pose override with explicit priority level.
+         * Higher priority wins when multiple tags are active.
+         * Known levels: External=50, OffhandGrip=60, Attaboy=65, Pipboy=70, ConfigMode=70, ForcedExternal=90, PhysicsGrab=100.
          */
         bool (FRIK_CALL*setHandPoseWithPriority)(const char* tag, Hand hand, HandPoseKind handPose, int priority);
 
+        // --- ROCK visual-authority additions (API v5) ---
+
         /**
-         * Supported since FRIK API v5.
-         * Get the final first-person hand world transform after FRIK's arm solve.
+         * Get the world transform of the hand bone (after IK solving).
          */
         RE::NiTransform (FRIK_CALL*getHandWorldTransform)(Hand hand);
 
         /**
-         * Supported since FRIK API v5.
          * Set a custom 5-finger hand pose override with explicit priority.
+         * Values: 0.0 = fully bent, 1.0 = fully straight.
          */
         bool (FRIK_CALL*setHandPoseCustomFingerPositionsWithPriority)(const char* tag, Hand hand, float thumb, float index, float middle, float ring, float pinky, int priority);
 
         /**
-         * Supported since FRIK API v5.
          * Set a custom 15-joint hand pose override with explicit priority.
-         * Values are ordered thumb/index/middle/ring/pinky, proximal/middle/distal.
+         * Values: 0.0 = fully bent, 1.0 = fully straight.
          */
         bool (FRIK_CALL*setHandPoseCustomJointPositionsWithPriority)(const char* tag, Hand hand, const float values[15], int priority);
 
         /**
-         * Supported since FRIK API v5.
-         * Apply an external world-space visual target through FRIK's arm chain.
-         * Intended for game-frame thread callers after FRIK's normal frame update.
+         * Apply an immediate world-space visual hand target through FRIK's first-person arm chain.
+         * This is intentionally skeleton-only: external mods still own their weapon/object solve.
          */
         bool (FRIK_CALL*applyExternalHandWorldTransform)(const char* tag, Hand hand, const RE::NiTransform& worldTarget, int priority);
 
         /**
-         * Supported since FRIK API v5.
-         * Clear a previously submitted external hand target for the tag.
+         * Clear a previously submitted external world-space visual hand target.
          */
         bool (FRIK_CALL*clearExternalHandWorldTransform)(const char* tag, Hand hand);
 
         /**
-         * API v5 ABI compatibility slots. These are optional and may be null.
+         * Set local transforms for individual finger bones with explicit priority.
+         * This augments scalar hand poses under the same tag instead of replacing
+         * them, allowing callers to override specific joints that need a different
+         * local rotation basis. The tag must already have an active scalar or
+         * per-joint pose entry; local transforms are not a standalone hand pose.
          */
         bool (FRIK_CALL*setHandPoseCustomLocalTransformsWithPriority)(const char* tag, Hand hand, const FingerLocalTransformOverride* overrideData, int priority);
+
+        /**
+         * Build FRIK-authored 15-bone local transforms for the same per-joint
+         * scalar values accepted by setHandPoseCustomJointPositions*. This lets
+         * clients start from FRIK's current open/closed hand tables before
+         * applying mesh-contact corrections, instead of duplicating those
+         * tables out of process.
+         */
         bool (FRIK_CALL*getHandPoseLocalTransformsForJointPositions)(Hand hand, const float values[15], FingerLocalTransformOverride* outTransforms);
 
         /**
-         * Supported since FRIK API v1.
          * Initialize the FRIK API object.
          * NOTE: call after all mods have been loaded in the game (GameLoaded event).
          *
@@ -454,4 +393,6 @@ namespace frik::api
          */
         inline static const FRIKApi* inst = nullptr;
     };
+
+    static_assert(FRIK_API_VERSION == 5, "FRIK API v5 is upstream v4 hand-pose compatibility plus ROCK visual-authority support");
 }

@@ -18,6 +18,8 @@ CMakeUserPresets*.json
 # User-specific files (MonoDevelop/Xamarin Studio)
 *.userprefs
 
+*opencode.json
+
 # Mono auto generated files
 mono_crash.*
 

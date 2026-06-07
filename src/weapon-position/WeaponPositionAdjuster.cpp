@@ -11,6 +11,9 @@
 #include "skeleton/Skeleton.h"
 #include "vrcf/VRControllersManager.h"
 
+#include <cmath>
+#include <string_view>
+
 using namespace common;
 
 namespace
@@ -49,6 +52,7 @@ namespace
 
         return weaponName;
     }
+
 }
 
 namespace frik
@@ -369,7 +373,7 @@ namespace frik
         }
 
         _offHandGripping = isGripping;
-        HandPose::setOffhandGripHandPose(isGripping);
+        setOffhandGripHandPose(isGripping);
     }
 
     /**

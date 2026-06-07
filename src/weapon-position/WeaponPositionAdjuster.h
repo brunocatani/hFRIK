@@ -3,6 +3,8 @@
 #include "WeaponPositionConfigMode.h"
 #include "skeleton/Skeleton.h"
 
+#include <string>
+
 namespace frik
 {
     class WeaponPositionAdjuster
@@ -41,6 +43,11 @@ namespace frik
 
         void onFrameUpdate();
         void loadStoredOffsets(const std::string& weaponName);
+
+        // --- ROCK integration ---
+
+        /// Expose barrel proximity check so ROCK can reuse FRIK's detection geometry
+        bool isOffhandNearBarrel(const RE::NiNode* weapon) const { return isOffhandCloseToBarrel(weapon); }
 
     private:
         void handleThrowableWeapon();
@@ -104,5 +111,6 @@ namespace frik
 
         // configuration mode to update custom transforms
         std::unique_ptr<WeaponPositionConfigMode> _configMode;
+
     };
 }

@@ -63,7 +63,7 @@ namespace frik
         // root->local.rotate = root->local.rotate * getMatrixFromDebugFlowFlags();
 
         const auto diff = root->parent->world.translate - _rootWorldPos;
-        logger::sample("Diff: {:.2f}, {:.2f}, {:.2f}", diff.x, diff.y, diff.z);
+        logger::sampleDebug(1000, "Selfie diff: {:.2f}, {:.2f}, {:.2f}", diff.x, diff.y, diff.z);
         root->parent->local.translate -= diff;
 
         // f4vr::updateDown(pWorldNode, true);

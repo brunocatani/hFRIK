@@ -65,7 +65,7 @@ namespace frik
         }
 
         const float threshhold = isPipboyOpen ? g_config.pipboyLookAwayThreshold : g_config.pipboyLookAtThreshold;
-        return isCameraLookingAtObject(f4vr::getPlayerCamera()->cameraRoot.get(), screen, threshhold);
+        return isCameraLookingAtObject(f4vr::getPlayerCamera()->cameraNode, screen, threshhold);
     }
 
     /**
@@ -115,7 +115,7 @@ namespace frik
         }
 
         if (g_config.isFalloutLondonVR) {
-            HandPose::setAttaboyHandPose(open);
+            setAttaboyHandPose(open);
             if (_attaboyOnBeltNode && _attaboyOnBeltNode->parent && _attaboyOnBeltNode->parent->parent) {
                 // show/hide the Attaboy on belt model depending if it's on as it's grabbed by the player
                 f4vr::setNodeVisibility(_attaboyOnBeltNode->parent->parent, !open);
@@ -189,6 +189,28 @@ namespace frik
             // post screen position adjustments
             checkTurningOffByLookingAway();
         }
+    }
+
+    void Pipboy::syncAfterExternalHandAuthority(const bool isLeft)
+    {
+        /*
+         * ROCK can ask FRIK to place the support hand after the regular FRIK
+         * Pip-Boy pass has already sampled the screen. When the Pip-Boy is on
+         * the same arm, keep the movement dampener from interpolating against
+         * the pre-authority arm frame on the next update.
+         */
+        const bool pipboyArmIsLeft = !g_config.leftHandedPipBoy;
+        if (isLeft != pipboyArmIsLeft || g_config.dampenPipboyScreenMode != DampenPipboyScreenMode::Movement) {
+            return;
+        }
+
+        const auto pipboyScreen = f4vr::getPlayerNodes()->ScreenNode;
+        if (!pipboyScreen) {
+            return;
+        }
+
+        _pipboyScreenPrevFrame.clear();
+        _pipboyScreenStableFrame = pipboyScreen->world;
     }
 
     /**

@@ -1,7 +1,7 @@
 #pragma once
 
 #include <optional>
-#include <Version.h>
+#include "FRIKVersion.h"
 
 #include "ConfigBase.h"
 #include "resources.h"
@@ -65,7 +65,7 @@ namespace frik
     {
     public:
         explicit Config() :
-            ConfigBase(Version::PROJECT, FRIK_INI_PATH, IDR_FRIK_INI) {}
+            ConfigBase(version::PROJECT, FRIK_INI_PATH, IDR_FRIK_INI) {}
 
         virtual void load() override;
         void loadIniOnly();
@@ -86,8 +86,6 @@ namespace frik
         void setPlayerBodyOffsetForward(float value);
         float getPlayerHMDOffsetUp() const;
         void setPlayerHMDOffsetUp(float value);
-        float getPlayerLegSlackAdjustOffset() const;
-        void setPlayerLegSlackAdjustOffset(float value);
 
         static void openInNotepad();
         RE::NiTransform getPipboyOffset();
@@ -116,27 +114,22 @@ namespace frik
         bool isPlayingSeated = false;
         float comfortSneakHackStaticBodyPitchAngle = 0;
 
-        // HMD, body, and leg slack adjust offsets for standing/sitting and in/out of Power Armor
+        // Camera and Body offsets for standing/sitting and in/out of Power Armor
         float playerHMDOffsetUpStanding = 0;
         float playerBodyOffsetUpStanding = 0;
-        float playerLegSlackAdjustOffsetStanding = 0;
         float playerBodyOffsetForwardStanding = 0;
         float playerHMDOffsetUpSitting = 0;
         float playerBodyOffsetUpSitting = 0;
-        float playerLegSlackAdjustOffsetSitting = 0;
         float playerBodyOffsetForwardSitting = 0;
 
         float playerHMDOffsetUpStandingInPA = 0;
         float playerBodyOffsetUpStandingInPA = 0;
-        float playerLegSlackAdjustOffsetStandingInPA = 0;
         float playerBodyOffsetForwardStandingInPA = 0;
         float playerHMDOffsetUpSittingInPA = 0;
         float playerBodyOffsetUpSittingInPA = 0;
-        float playerLegSlackAdjustOffsetSittingInPA = 0;
         float playerBodyOffsetForwardSittingInPA = 0;
 
         float headBackPositionOffset = 0;
-        float skeletonLegSlackTarget = 0;
 
         // Pipboy
         float pipBoyScale = 0;

@@ -1,8 +1,8 @@
 #include "BodyAdjustmentSubConfigMode.h"
 
 #include "Config.h"
-#include "ConfigurationMode.h"
 #include "utils.h"
+#include "skeleton/HandPose.h"
 #include "vrui/UIButton.h"
 #include "vrui/UIManager.h"
 #include "vrui/UIToggleGroupContainer.h"
@@ -123,7 +123,7 @@ namespace frik
     void BodyAdjustmentSubConfigMode::togglePlayingSeated(const bool seated)
     {
         g_config.saveIsPlayingSeated(seated);
-        clearConfigTarget();
+        _configTarget = BodyAdjustmentConfigTarget::None;
     }
 
     /**
@@ -133,7 +133,8 @@ namespace frik
     void BodyAdjustmentSubConfigMode::toggleHideHeadEquipment(const bool hide)
     {
         g_config.saveHideHeadEquipment(hide);
-        clearConfigTarget();
+        _row2Container->clearToggleState();
+        _configTarget = BodyAdjustmentConfigTarget::None;
         if (hide) {
             std::string msg = "Player head equipment is now hidden";
             if (g_config.selfieIgnoreHideFlags) {
@@ -190,17 +191,10 @@ namespace frik
     {
         const auto primAxisY = vrcf::VRControllers.getThumbstickValue(vrcf::Hand::Primary).y;
         g_config.setPlayerHMDOffsetUp(g_config.getPlayerHMDOffsetUp() + correctAdjustmentValue(primAxisY, 4));
-        g_config.setPlayerBodyOffsetUp(g_config.getPlayerBodyOffsetUp() + 0.2f * correctAdjustmentValue(primAxisY, 4));
+        g_config.setPlayerBodyOffsetUp(g_config.getPlayerBodyOffsetUp() - 0.125f * correctAdjustmentValue(primAxisY, 4));
 
         const auto offAxisY = vrcf::VRControllers.getThumbstickValue(vrcf::Hand::Offhand).y;
         g_config.setPlayerBodyOffsetUp(g_config.getPlayerBodyOffsetUp() - correctAdjustmentValue(offAxisY, 4));
-        g_config.setPlayerLegSlackAdjustOffset(g_config.getPlayerLegSlackAdjustOffset() + 3 * correctAdjustmentValue(offAxisY, 4));
-
-        if (_skeletonLegSlack > g_config.skeletonLegSlackTarget + 0.1f || _skeletonLegSlack < g_config.skeletonLegSlackTarget - 0.1f) {
-            logger::debug("Update player leg slack adjust offset due to skeleton leg slack value out of optimal: {}, adjust: {}", _skeletonLegSlack,
-                g_config.getPlayerLegSlackAdjustOffset());
-            g_config.setPlayerLegSlackAdjustOffset(g_config.getPlayerLegSlackAdjustOffset() + (_skeletonLegSlack > g_config.skeletonLegSlackTarget + 0.1f ? -0.1f : 0.1f));
-        }
     }
 
     void BodyAdjustmentSubConfigMode::handleForwardAdjustment()
@@ -226,14 +220,13 @@ namespace frik
     {
         f4vr::showNotification("Saving all body adjustment configs");
         g_config.save();
-        clearConfigTarget();
     }
 
     /**
      * Reset the current config adjusting value to the default in the embedded config.
      * Use a small hack to load ONLY the embedded config into a temp config object.
      */
-    void BodyAdjustmentSubConfigMode::resetConfig()
+    void BodyAdjustmentSubConfigMode::resetConfig() const
     {
         Config defaultConfig;
         defaultConfig.loadEmbeddedDefaultOnly();
@@ -243,7 +236,6 @@ namespace frik
         case BodyAdjustmentConfigTarget::BodyHeight:
             f4vr::showNotification("Reset height body adjustment config");
             g_config.setPlayerHMDOffsetUp(defaultConfig.getPlayerHMDOffsetUp());
-            g_config.setPlayerLegSlackAdjustOffset(defaultConfig.getPlayerLegSlackAdjustOffset());
             g_config.setPlayerBodyOffsetUp(defaultConfig.getPlayerBodyOffsetUp());
             break;
         case BodyAdjustmentConfigTarget::BodyForwardOffset:
@@ -263,13 +255,5 @@ namespace frik
             f4vr::showNotification("Please select body adjustment to reset");
             break;
         }
-
-        clearConfigTarget();
-    }
-
-    void BodyAdjustmentSubConfigMode::clearConfigTarget()
-    {
-        _configTarget = BodyAdjustmentConfigTarget::None;
-        _row2Container->clearToggleState();
     }
 }

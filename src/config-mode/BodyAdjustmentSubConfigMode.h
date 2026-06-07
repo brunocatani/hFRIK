@@ -23,11 +23,9 @@ namespace frik
         explicit BodyAdjustmentSubConfigMode(const std::function<void()>& onClose);
 
         void onFrameUpdate() const;
-        static void updateLegSlack(const float skeletonLegSlack) { _skeletonLegSlack = skeletonLegSlack; };
 
     private:
         void createConfigUI();
-        void clearConfigTarget();
         void togglePlayingSeated(bool seated);
         void toggleHideHeadEquipment(bool hide);
         void closeConfig();
@@ -36,11 +34,8 @@ namespace frik
         static void handleForwardAdjustment();
         static void handleArmsLengthAdjustment();
         static void handleVRScaleAdjustment();
-        void saveConfig();
-        void resetConfig();
-
-        // roundabout way to recalculate the leg slack adjust offset by knowing the skeleton leg slack value
-        inline static float _skeletonLegSlack;
+        static void saveConfig();
+        void resetConfig() const;
 
         std::function<void()> _onClose;
 

@@ -1,6 +1,8 @@
 #pragma once
 
-#include <Version.h>
+#include <cstdint>
+
+#include "FRIKVersion.h"
 
 #include "Config.h"
 #include "ModBase.h"
@@ -22,11 +24,11 @@ namespace frik
     public:
         FRIK() :
             ModBase({
-                Version::PROJECT,
-                "F4VRBody",
-                Version::NAME,
+                version::PROJECT,
+                version::F4SE_NAME,
+                version::NAME,
                 &g_config,
-                Version::PROJECT,
+                version::PROJECT,
                 512,
                 true,
                 true
@@ -49,6 +51,7 @@ namespace frik
         bool isPipboyOn() const { return _pipboy && _pipboy->isOpen(); }
         bool isPipboyOperatingWithFinger() const { return _pipboy && _pipboy->isOperatingWithFinger(); }
         void swapPipboyModel() const { if (_pipboy) { _pipboy->swapModel(); } }
+        void syncPipboyAfterExternalHandAuthority(const bool isLeft) const { if (_pipboy) { _pipboy->syncAfterExternalHandAuthority(isLeft); } }
         void refreshAfterExternalHandAuthority(bool isLeft);
 
         bool isMainConfigurationModeActive() const { return _mainConfigMode.isOpen(); }
@@ -66,10 +69,18 @@ namespace frik
         void registerOpenSettingButton(const OpenExternalModConfigData& data) { _mainConfigMode.registerOpenExternalModSettingButton(data); }
 
         bool isMeleeWeaponDrawn() const { return _weaponPosition && _weaponPosition->isMeleeWeaponDrawn(); }
+        bool isWeaponDrawn() const { return _weaponPosition && _weaponPosition->isWeaponDrawn(); }
         bool isOffHandGrippingWeapon() const { return _weaponPosition && _weaponPosition->isOffHandGrippingWeapon(); }
         bool isOffHandGrippingEnabled() const { return WeaponPositionAdjuster::isOffHandGrippingEnabled(); }
         void setOffHandGrippingEnabled(const bool enabled) { WeaponPositionAdjuster::setOffHandGrippingEnabled(enabled); }
+
+        // --- ROCK integration getters ---
+
+        /// Get the skeleton instance (nullptr if not initialized)
         Skeleton* getSkeleton() const { return _skelly; }
+
+        /// Get the smooth movement handler
+        SmoothMovementVR& getSmoothMovement() { return _smoothMovement; }
 
         bool inWeaponRepositionMode() const { return _weaponPosition && _weaponPosition->inWeaponRepositionMode(); }
         void toggleWeaponRepositionMode() const { if (_weaponPosition) { _weaponPosition->toggleWeaponRepositionMode(); } }
@@ -99,10 +110,10 @@ namespace frik
         static void initForFalloutLondonVR();
 
         bool _inPowerArmor = false;
-        bool _lastPublishedPowerArmorState = false;
         bool _isLookingThroughScope = false;
         float _dynamicCameraHeight = 0;
         bool _selfieMode = false;
+        std::uint32_t _skeletonInitDelayFrames = 0;
 
         // the currently root node used in skeleton
         RE::NiNode* _workingRootNode = nullptr;

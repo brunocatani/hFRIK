@@ -45,12 +45,8 @@ namespace frik
      */
     bool isArmorHasHeadLamp()
     {
-        const auto biped = f4vr::getPlayer()->biped.get();
-        if (!biped) {
-            return false;
-        }
-        if (const auto equippedItem = biped->object[0].parent.object) {
-            if (const auto torchEnabledArmor = equippedItem->As<RE::TESObjectARMO>()) {
+        if (const auto equippedItem = f4vr::getPlayer()->equipData->slots[0].item) {
+            if (const auto torchEnabledArmor = dynamic_cast<F4SEVR::TESObjectARMO*>(equippedItem)) {
                 return f4vr::hasKeyword(torchEnabledArmor, 0xB34A6);
             }
         }
@@ -85,7 +81,7 @@ namespace frik
         if (const auto equipWeaponData = f4vr::getEquippedWeaponData()) {
             const auto vfunc = reinterpret_cast<uint64_t*>(equipWeaponData);
             if ((*vfunc & 0xFFFF) == (f4vr::EquippedWeaponData_vfunc.get() & 0xFFFF)) {
-                const auto muzzle = reinterpret_cast<f4vr::MuzzleFlash*>(equipWeaponData->muzzleFlash);
+                const auto muzzle = reinterpret_cast<f4vr::MuzzleFlash*>(equipWeaponData->unk28);
                 if (muzzle && muzzle->fireNode && muzzle->projectileNode) {
                     return muzzle;
                 }
