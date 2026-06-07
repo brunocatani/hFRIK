@@ -49,6 +49,7 @@ namespace frik
         bool isPipboyOn() const { return _pipboy && _pipboy->isOpen(); }
         bool isPipboyOperatingWithFinger() const { return _pipboy && _pipboy->isOperatingWithFinger(); }
         void swapPipboyModel() const { if (_pipboy) { _pipboy->swapModel(); } }
+        void refreshAfterExternalHandAuthority(bool isLeft);
 
         bool isMainConfigurationModeActive() const { return _mainConfigMode.isOpen(); }
         bool isPipboyConfigurationModeActive() const { return _configurationMode && _configurationMode->isPipBoyConfigModeActive(); }
@@ -68,11 +69,13 @@ namespace frik
         bool isOffHandGrippingWeapon() const { return _weaponPosition && _weaponPosition->isOffHandGrippingWeapon(); }
         bool isOffHandGrippingEnabled() const { return WeaponPositionAdjuster::isOffHandGrippingEnabled(); }
         void setOffHandGrippingEnabled(const bool enabled) { WeaponPositionAdjuster::setOffHandGrippingEnabled(enabled); }
+        Skeleton* getSkeleton() const { return _skelly; }
 
         bool inWeaponRepositionMode() const { return _weaponPosition && _weaponPosition->inWeaponRepositionMode(); }
         void toggleWeaponRepositionMode() const { if (_weaponPosition) { _weaponPosition->toggleWeaponRepositionMode(); } }
 
         void dispatchMessageToExternalMod(const std::string& receivingModName, std::uint32_t messageType, void* data, std::uint32_t dataLen) const;
+        void broadcastMessage(std::uint32_t messageType, void* data, std::uint32_t dataLen) const;
 
         void smoothMovement();
 
@@ -96,6 +99,7 @@ namespace frik
         static void initForFalloutLondonVR();
 
         bool _inPowerArmor = false;
+        bool _lastPublishedPowerArmorState = false;
         bool _isLookingThroughScope = false;
         float _dynamicCameraHeight = 0;
         bool _selfieMode = false;

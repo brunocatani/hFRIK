@@ -3,6 +3,7 @@
 #include "Config.h"
 #include "GameHooks.h"
 #include "PapyrusApi.h"
+#include "api/FRIKApi.h"
 #include "utils.h"
 #include "config-mode/ConfigurationMode.h"
 #include "f4vr/DebugDump.h"
@@ -17,6 +18,11 @@
 #include "vrui/UIModAdapter.h"
 
 using namespace common;
+
+namespace frik::api
+{
+    void clearExternalHandAuthorityStateForSkeletonRelease();
+}
 
 // This is the entry point to the mod.
 extern "C" DLLEXPORT bool F4SEAPI F4SEPlugin_Query(const F4SE::QueryInterface* a_skse, F4SE::PluginInfo* a_info)
@@ -155,6 +161,13 @@ namespace frik
             }
 
             initSkeleton();
+
+            if (_inPowerArmor != _lastPublishedPowerArmorState) {
+                bool powerArmorState = _inPowerArmor;
+                broadcastMessage(static_cast<std::uint32_t>(frik::api::FRIKApi::LifecycleEvent::kPowerArmorChanged), &powerArmorState, sizeof(bool));
+                logger::info("Dispatched kPowerArmorChanged (inPA={}).", _inPowerArmor);
+                _lastPublishedPowerArmorState = _inPowerArmor;
+            }
         }
 
         logger::trace("Update Skeleton...");
@@ -191,6 +204,16 @@ namespace frik
         }
     }
 
+    void FRIK::refreshAfterExternalHandAuthority(const bool isLeft)
+    {
+        if (!_skelly) {
+            return;
+        }
+
+        _skelly->refreshExternalHandAfterAuthority(isLeft);
+        updateWorldFinal();
+    }
+
     void FRIK::initSkeleton()
     {
         _inPowerArmor = f4vr::isInPowerArmor();
@@ -212,6 +235,9 @@ namespace frik
         _pipboy = new Pipboy(_skelly);
         _configurationMode = new ConfigurationMode(_skelly);
         _weaponPosition = new WeaponPositionAdjuster(_skelly);
+
+        broadcastMessage(static_cast<std::uint32_t>(frik::api::FRIKApi::LifecycleEvent::kSkeletonReady), nullptr, 0);
+        logger::info("Dispatched kSkeletonReady lifecycle event.");
     }
 
     /**
@@ -290,6 +316,12 @@ namespace frik
      */
     void FRIK::releaseSkeleton()
     {
+        if (_skelly) {
+            broadcastMessage(static_cast<std::uint32_t>(frik::api::FRIKApi::LifecycleEvent::kSkeletonDestroying), nullptr, 0);
+            logger::info("Dispatched kSkeletonDestroying lifecycle event.");
+        }
+        frik::api::clearExternalHandAuthorityStateForSkeletonRelease();
+
         _workingRootNode = nullptr;
 
         delete _skelly;
@@ -370,6 +402,11 @@ namespace frik
     void FRIK::dispatchMessageToExternalMod(const std::string& receivingModName, const std::uint32_t messageType, void* data, const std::uint32_t dataLen) const
     {
         _messaging->Dispatch(messageType, data, dataLen, receivingModName.c_str());
+    }
+
+    void FRIK::broadcastMessage(const std::uint32_t messageType, void* data, const std::uint32_t dataLen) const
+    {
+        _messaging->Dispatch(messageType, data, dataLen, nullptr);
     }
 
     void FRIK::onBetterScopesMessage(F4SE::MessagingInterface::Message* msg)

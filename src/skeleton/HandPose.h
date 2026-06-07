@@ -1,6 +1,7 @@
 #pragma once
 
 #include <map>
+#include <cstdint>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -17,6 +18,7 @@ namespace frik
         explicit HandPose(bool inPowerArmor);
 
         static void setHandPoseOverride(bool isLeft, std::string_view tag, const HandFingersPose& pose, bool forceTop);
+        static void setHandPoseOverrideWithPriority(bool isLeft, std::string_view tag, const HandFingersPose& pose, int priority);
         static void clearHandPoseOverride(bool isLeft, std::string_view tag);
         static skeleton::data::HandPoseOverrideTagState getHandPoseSetTagState(bool isLeft, std::string_view tag);
         static skeleton::data::HandPoseKind getCurrentHandPoseKind(bool isLeft);
@@ -55,6 +57,8 @@ namespace frik
         {
             std::string tag;
             HandFingersPose pose;
+            int priority = 50;
+            std::uint64_t sequence = 0;
         };
 
         struct PalmBlendState
@@ -72,7 +76,7 @@ namespace frik
         RE::NiMatrix3 getPoseBoneRotation(const std::string& boneName, const HandFingersPose& pose) const;
         RE::NiMatrix3 blendBoneRotation(const std::string& boneName, float flex, float splay) const;
         static bool shouldUseThumbsUpPose(bool isLeft);
-        static void setHandPoseOverrideIntr(bool isLeft, std::string_view tag, const HandFingersPose& pose, bool forceTop);
+        static void setHandPoseOverrideIntr(bool isLeft, std::string_view tag, const HandFingersPose& pose, int priority);
         static void clearHandPoseOverrideIntr(bool isLeft, std::string_view tag);
         static std::vector<TaggedHandPoseOverride>& getHandOverrides(bool isLeft);
         static const TaggedHandPoseOverride* getActiveHandPoseOverride(bool isLeft);
@@ -84,5 +88,6 @@ namespace frik
         PalmBlendState _rightPalmBlend;
         inline static std::vector<TaggedHandPoseOverride> _leftHandOverrides;
         inline static std::vector<TaggedHandPoseOverride> _rightHandOverrides;
+        inline static std::uint64_t _nextOverrideSequence = 0;
     };
 }

@@ -1,6 +1,7 @@
 #include "Skeleton.h"
 
 #include <array>
+#include <cmath>
 
 #include "Config.h"
 #include "FRIK.h"
@@ -26,6 +27,24 @@ namespace
     {
         return frik::g_config.comfortSneakHackStaticBodyPitchAngle > 0 && isComfortSneakMode() && isPlayerSneaking();
     }
+
+    bool isFiniteTransform(const RE::NiTransform& transform)
+    {
+        if (!std::isfinite(transform.translate.x) || !std::isfinite(transform.translate.y) || !std::isfinite(transform.translate.z) ||
+            !std::isfinite(transform.scale) || std::abs(transform.scale) <= 0.0001f) {
+            return false;
+        }
+
+        for (int row = 0; row < 3; row++) {
+            for (int col = 0; col < 4; col++) {
+                if (!std::isfinite(transform.rotate.entry[row][col])) {
+                    return false;
+                }
+            }
+        }
+
+        return true;
+    }
 }
 
 namespace frik
@@ -43,6 +62,56 @@ namespace frik
             offset *= _comfortSneakCameraOffsetAdjustment;
         }
         return offset;
+    }
+
+    bool Skeleton::applyExternalHandWorldTransform(const bool isLeft, const RE::NiTransform& worldTarget)
+    {
+        if (!isFiniteTransform(worldTarget)) {
+            return false;
+        }
+
+        const ArmNodes arm = isLeft ? _leftArm : _rightArm;
+        if (!arm.shoulder || !arm.hand || !arm.upper || !arm.forearm1 || (!_inPowerArmor && (!arm.forearm2 || !arm.forearm3))) {
+            return false;
+        }
+
+        const auto weaponNode = f4vr::getWeaponNode();
+        const char* ignoredChildNodeName = weaponNode ? weaponNode->name.c_str() : nullptr;
+
+        restoreArmNodesToDefault(isLeft);
+        f4vr::updateTransformsDown(arm.shoulder, true, ignoredChildNodeName);
+
+        if (!solveArmToHandWorldTarget(isLeft, worldTarget, true, ignoredChildNodeName)) {
+            return false;
+        }
+
+        f4vr::updateTransformsDown(arm.shoulder, true, ignoredChildNodeName);
+        return isFiniteTransform(arm.hand->world);
+    }
+
+    bool Skeleton::restoreTrackedHandAfterExternalAuthority(const bool isLeft)
+    {
+        if (getFirstPersonSkeleton() == nullptr) {
+            return false;
+        }
+
+        setArms(isLeft);
+        const ArmNodes arm = isLeft ? _leftArm : _rightArm;
+        return arm.hand && isFiniteTransform(arm.hand->world);
+    }
+
+    void Skeleton::refreshExternalHandAfterAuthority(const bool isLeft)
+    {
+        _handPose.onFrameUpdate(_root, _frameTime);
+
+        const ArmNodes arm = isLeft ? _leftArm : _rightArm;
+        if (!arm.hand) {
+            return;
+        }
+
+        const auto weaponNode = f4vr::getWeaponNode();
+        const char* ignoredChildNodeName = weaponNode ? weaponNode->name.c_str() : nullptr;
+        f4vr::updateTransformsDown(arm.hand, true, ignoredChildNodeName);
     }
 
     /**
@@ -930,17 +999,48 @@ namespace frik
         weaponNode->IncRefCount();
         Update1StPersonArm(RE::PlayerCharacter::GetSingleton(), &weaponNode, &offsetNode);
 
-        RE::NiPoint3 handPos = isLeft ? _leftHand->world.translate : _rightHand->world.translate;
-        RE::NiMatrix3 handRot = isLeft ? _leftHand->world.rotate : _rightHand->world.rotate;
+        const RE::NiTransform handWorldTarget = isLeft ? _leftHand->world : _rightHand->world;
+        (void)solveArmToHandWorldTarget(isLeft, handWorldTarget, false, nullptr);
+    }
+
+    void Skeleton::restoreArmNodesToDefault(const bool isLeft)
+    {
+        const ArmNodes arm = isLeft ? _leftArm : _rightArm;
+        const std::array<RE::NiAVObject*, 7> armChain{ arm.shoulder, arm.upper, arm.upperT1, arm.forearm1, arm.forearm2, arm.forearm3, arm.hand };
+
+        for (auto* armNode : armChain) {
+            if (!armNode) {
+                continue;
+            }
+            for (const auto& [boneNode, resetTransform] : _skeletonNodesToDefaultTransforms) {
+                if (boneNode == armNode) {
+                    armNode->local = resetTransform;
+                    break;
+                }
+            }
+        }
+    }
+
+    bool Skeleton::solveArmToHandWorldTarget(const bool isLeft, const RE::NiTransform& handWorldTarget, const bool externalAuthority, const char* ignoredChildNodeName)
+    {
+        if (!isFiniteTransform(handWorldTarget)) {
+            return false;
+        }
+
+        RE::NiPoint3 handPos = handWorldTarget.translate;
+        RE::NiMatrix3 handRot = handWorldTarget.rotate;
 
         const auto arm = isLeft ? _leftArm : _rightArm;
+        if (!arm.shoulder || !arm.upper || !arm.forearm1 || !arm.hand || (!_inPowerArmor && (!arm.forearm2 || !arm.forearm3))) {
+            return false;
+        }
 
         // Detect if the 1st person hand position is invalid. This can happen when a controller loses tracking.
         // If it is, do not handle IK and let Fallout use its normal animations for that arm instead.
         if (isnan(handPos.x) || isnan(handPos.y) || isnan(handPos.z) ||
             isinf(handPos.x) || isinf(handPos.y) || isinf(handPos.z) ||
             MatrixUtils::vec3Len(arm.upper->world.translate - handPos) > 200.0) {
-            return;
+            return false;
         }
 
         float adjustedArmLength = g_config.armLength / 36.74f;
@@ -959,7 +1059,7 @@ namespace frik
         RE::NiMatrix3 result = MatrixUtils::getMatrixFromRotateVectorVec(sLocalDir, RE::NiPoint3(1, 0, 0)) * arm.shoulder->local.rotate;
         arm.shoulder->local.rotate = result;
 
-        updateDown(arm.shoulder, true);
+        updateDown(arm.shoulder, true, ignoredChildNodeName);
 
         // The bend of the arm depends on its distance to the body.  Its distance as well as the lengths of
         // the upper arm and forearm define the sides of a triangle:
@@ -994,7 +1094,7 @@ namespace frik
         float hsLen = (std::max)(MatrixUtils::vec3Len(handToShoulder), 0.1f);
 
         if (hsLen > (upperLen + forearmLen) * 2.25f) {
-            return;
+            return false;
         }
 
         // Stretch the upper arm and forearm proportionally when the hand distance exceeds the arm length
@@ -1030,7 +1130,9 @@ namespace frik
         //		logger::info("final angle %2f", rads_to_degrees(twistAngle));
 
         // Smooth out sudden changes in the twist angle over time to reduce elbow shake
-        static std::array<float, 2> prevAngle = { 0, 0 };
+        static std::array<float, 2> prevControllerAngle = { 0, 0 };
+        static std::array<float, 2> prevExternalAngle = { 0, 0 };
+        auto& prevAngle = externalAuthority ? prevExternalAngle : prevControllerAngle;
         twistAngle = prevAngle[isLeft ? 0 : 1] + (twistAngle - prevAngle[isLeft ? 0 : 1]) * 0.25f;
         prevAngle[isLeft ? 0 : 1] = twistAngle;
 
@@ -1180,6 +1282,7 @@ namespace frik
             arm.forearm3->local.translate *= forearmRatio;
         }
         arm.hand->local.translate *= forearmRatio;
+        return true;
     }
 
     void Skeleton::hideHands() const

@@ -47,6 +47,16 @@ namespace frik
 
         void onFrameUpdate();
 
+        RE::NiTransform getHandWorldTransform(bool isLeft) const
+        {
+            const auto* hand = isLeft ? _leftHand : _rightHand;
+            return hand ? hand->world : RE::NiTransform();
+        }
+
+        bool applyExternalHandWorldTransform(bool isLeft, const RE::NiTransform& worldTarget);
+        bool restoreTrackedHandAfterExternalAuthority(bool isLeft);
+        void refreshExternalHandAfterAuthority(bool isLeft);
+
     private:
         // initialization
         void initializeNodes();
@@ -65,6 +75,8 @@ namespace frik
         void setSingleLeg(bool isLeft) const;
         void handleLeftHandedWeaponNodesSwitch();
         void setArms(bool isLeft);
+        void restoreArmNodesToDefault(bool isLeft);
+        bool solveArmToHandWorldTarget(bool isLeft, const RE::NiTransform& handWorldTarget, bool externalAuthority, const char* ignoredChildNodeName);
         void dampenHand(RE::NiNode* node, bool isLeft);
         void hide3rdPersonWeapon() const;
         void hideFistHelpers() const;

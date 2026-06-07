@@ -7,6 +7,7 @@
 #include <Windows.h>
 
 #include "RE/NetImmerse/NiPoint.h"
+#include "RE/NetImmerse/NiTransform.h"
 
 // ----------------------------------------------------------------------------------------
 // EXAMPLE USAGE:
@@ -45,7 +46,7 @@ namespace frik::api
 #define FRIK_CALL __cdecl
 
     // API version for compatibility checking
-    inline constexpr std::uint32_t FRIK_API_VERSION = 4;
+    inline constexpr std::uint32_t FRIK_API_VERSION = 5;
 
     struct FRIKApi
     {
@@ -74,16 +75,23 @@ namespace frik::api
         enum class HandPoseKind : std::uint8_t
         {
             // no specific pose is set
-            Unset,
+            Unset = 0,
             // pose set with custom finger positions
-            Custom,
-            Open,
-            Pointing,
-            HoldingWeapon,
-            OffhandGrip,
-            Attaboy,
-            ThumbsUp,
+            Custom = 1,
+            Open = 2,
+            Pointing = 3,
+            HoldingWeapon = 4,
+            OffhandGrip = 5,
+            Attaboy = 6,
+            ThumbsUp = 7,
+
+            // API v5 additions are appended to preserve v4 enum values.
+            Fist = 8,
+            HoldingGun = 9,
+            HoldingMelee = 10,
         };
+
+        using HandPoses = HandPoseKind;
 
         /**
          * Full pose values for a single finger.
@@ -193,6 +201,28 @@ namespace frik::api
             const char* buttonIconNifPath;
             const char* callbackReceiverName;
             std::uint32_t callbackMessageType;
+        };
+
+        /**
+         * Optional per-finger-bone local transform overrides.
+         * API v5 keeps this struct in the table ABI so clients compiled against
+         * hFRIK v5 can detect whether local-transform callbacks are present.
+         */
+        struct FingerLocalTransformOverride
+        {
+            std::uint16_t enabledMask = 0;
+            std::uint16_t reserved[3] = {};
+            RE::NiTransform localTransforms[15] = {};
+        };
+
+        /**
+         * FRIK lifecycle event message types dispatched on the "F4VRBody" F4SE channel.
+         */
+        enum class LifecycleEvent : std::uint32_t
+        {
+            kSkeletonReady = 100,
+            kSkeletonDestroying = 101,
+            kPowerArmorChanged = 102,
         };
 
         /**
@@ -328,6 +358,51 @@ namespace frik::api
          * @return true if successful.
          */
         bool (FRIK_CALL*setHandPoseCustom)(const char* tag, Hand hand, const HandPoseData& handPose, bool forceTop);
+
+        /**
+         * Supported since FRIK API v5.
+         * Set a predefined hand pose override with explicit priority.
+         * Higher priority wins; same-priority updates use newest-wins ordering.
+         */
+        bool (FRIK_CALL*setHandPoseWithPriority)(const char* tag, Hand hand, HandPoseKind handPose, int priority);
+
+        /**
+         * Supported since FRIK API v5.
+         * Get the final first-person hand world transform after FRIK's arm solve.
+         */
+        RE::NiTransform (FRIK_CALL*getHandWorldTransform)(Hand hand);
+
+        /**
+         * Supported since FRIK API v5.
+         * Set a custom 5-finger hand pose override with explicit priority.
+         */
+        bool (FRIK_CALL*setHandPoseCustomFingerPositionsWithPriority)(const char* tag, Hand hand, float thumb, float index, float middle, float ring, float pinky, int priority);
+
+        /**
+         * Supported since FRIK API v5.
+         * Set a custom 15-joint hand pose override with explicit priority.
+         * Values are ordered thumb/index/middle/ring/pinky, proximal/middle/distal.
+         */
+        bool (FRIK_CALL*setHandPoseCustomJointPositionsWithPriority)(const char* tag, Hand hand, const float values[15], int priority);
+
+        /**
+         * Supported since FRIK API v5.
+         * Apply an external world-space visual target through FRIK's arm chain.
+         * Intended for game-frame thread callers after FRIK's normal frame update.
+         */
+        bool (FRIK_CALL*applyExternalHandWorldTransform)(const char* tag, Hand hand, const RE::NiTransform& worldTarget, int priority);
+
+        /**
+         * Supported since FRIK API v5.
+         * Clear a previously submitted external hand target for the tag.
+         */
+        bool (FRIK_CALL*clearExternalHandWorldTransform)(const char* tag, Hand hand);
+
+        /**
+         * API v5 ABI compatibility slots. These are optional and may be null.
+         */
+        bool (FRIK_CALL*setHandPoseCustomLocalTransformsWithPriority)(const char* tag, Hand hand, const FingerLocalTransformOverride* overrideData, int priority);
+        bool (FRIK_CALL*getHandPoseLocalTransformsForJointPositions)(Hand hand, const float values[15], FingerLocalTransformOverride* outTransforms);
 
         /**
          * Supported since FRIK API v1.
