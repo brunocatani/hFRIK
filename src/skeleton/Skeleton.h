@@ -118,7 +118,10 @@ namespace frik
             float headViewDistance = 0;
         };
 
-        const LowPostureStatus& getLowPostureStatus() const { return _lowPosture; }
+        const LowPostureStatus& getLowPostureStatus() const
+        {
+            return _lowPosture;
+        }
 
         void onFrameUpdate();
 
@@ -214,7 +217,15 @@ namespace frik
         std::array<RE::NiNode*, 2> _calves{};
         std::array<RE::NiNode*, 2> _feet{};
         LowPostureStatus _lowPosture;
-        enum class LowPosturePhase { Upright, Transition, Prone, Side, Supine, Rejected };
+        enum class LowPosturePhase
+        {
+            Upright,
+            Transition,
+            Prone,
+            Side,
+            Supine,
+            Rejected
+        };
         LowPosturePhase _reportedLowPosturePhase = LowPosturePhase::Upright;
         int _reportedOrientationCue = 0;
         bool _reportedOrientationTracked = false;

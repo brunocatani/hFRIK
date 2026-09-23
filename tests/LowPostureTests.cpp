@@ -125,7 +125,9 @@ TEST_CASE("Floor frames distinguish rolling over from reclining backward without
 
 TEST_CASE("Floor frame rotations preserve limb geometry and body-relative projections", "[low-posture]")
 {
-    const auto dot = [](const auto& a, const auto& b) { return a[0] * b[0] + a[1] * b[1] + a[2] * b[2]; };
+    const auto dot = [](const auto& a, const auto& b) {
+        return a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+    };
     constexpr std::array<float, 3> wristInBody{ 12, 30, -8 };
     for (int yaw = -180; yaw <= 180; yaw += 30) {
         for (int roll = -180; roll <= 180; roll += 30) {
@@ -145,7 +147,8 @@ TEST_CASE("Floor frame rotations preserve limb geometry and body-relative projec
             }
             REQUIRE(dot(worldWrist, worldWrist) == Catch::Approx(dot(wristInBody, wristInBody)));
             const std::array cross{ f.right[1] * f.front[2] - f.right[2] * f.front[1],
-                f.right[2] * f.front[0] - f.right[0] * f.front[2], f.right[0] * f.front[1] - f.right[1] * f.front[0] };
+                f.right[2] * f.front[0] - f.right[0] * f.front[2],
+                f.right[0] * f.front[1] - f.right[1] * f.front[0] };
             REQUIRE(dot(cross, f.headward) == Catch::Approx(1)); // proper rotation, never a left/right reflection
         }
     }

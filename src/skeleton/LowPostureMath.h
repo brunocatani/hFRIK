@@ -26,8 +26,8 @@ namespace frik::lowposture
 
     inline bool hasOrientationCue(const float lowBlend, const float faceUp, const float rightUp, const float headwardHorizontalLength)
     {
-        return std::isfinite(lowBlend) && std::isfinite(faceUp) && std::isfinite(rightUp) && std::isfinite(headwardHorizontalLength) &&
-            lowBlend >= 0.5f && headwardHorizontalLength >= 0.55f && (faceUp > 0.6f || std::abs(rightUp) > 0.7f);
+        return std::isfinite(lowBlend) && std::isfinite(faceUp) && std::isfinite(rightUp) && std::isfinite(headwardHorizontalLength) && lowBlend >= 0.5f &&
+               headwardHorizontalLength >= 0.55f && (faceUp > 0.6f || std::abs(rightUp) > 0.7f);
     }
 
     // The headset cannot distinguish a head turn from a torso roll. Allow 45 degrees of head movement
@@ -70,8 +70,7 @@ namespace frik::lowposture
 
     // Equivalent to normalizing (hip - neck + backward * tan(pitch) * distance) below 90 degrees,
     // but remains continuous at horizontal. No huge intermediate hip position or tangent sign flip.
-    inline std::optional<std::array<float, 3>> hipDirection(
-        const std::array<float, 3>& neckToHip, const std::array<float, 3>& backward, const float pitch)
+    inline std::optional<std::array<float, 3>> hipDirection(const std::array<float, 3>& neckToHip, const std::array<float, 3>& backward, const float pitch)
     {
         const float distance = std::hypot(neckToHip[0], neckToHip[1], neckToHip[2]);
         const float backwardLength = std::hypot(backward[0], backward[1], backward[2]);

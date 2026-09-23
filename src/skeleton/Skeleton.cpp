@@ -67,8 +67,7 @@ namespace frik
 
         RE::NiPoint3 rotateAboutUp(const RE::NiPoint3& vector, const RE::NiPoint3& up, const float angle)
         {
-            return vector * std::cos(angle) + MatrixUtils::vec3Cross(up, vector) * std::sin(angle) +
-                up * (MatrixUtils::vec3Dot(up, vector) * (1.0f - std::cos(angle)));
+            return vector * std::cos(angle) + MatrixUtils::vec3Cross(up, vector) * std::sin(angle) + up * (MatrixUtils::vec3Dot(up, vector) * (1.0f - std::cos(angle)));
         }
     }
 
@@ -156,8 +155,8 @@ namespace frik
         _thighs = { findNode(_root, "LLeg_Thigh"), findNode(_root, "RLeg_Thigh") };
         _calves = { findNode(_root, "LLeg_Calf"), findNode(_root, "RLeg_Calf") };
         _feet = { findNode(_root, "LLeg_Foot"), findNode(_root, "RLeg_Foot") };
-        if (!_com || !_com->parent || !_neck || !_neck->parent || !_spine1 || !_spine1->parent ||
-            !_thighs[0] || !_thighs[1] || !_calves[0] || !_calves[1] || !_feet[0] || !_feet[1]) {
+        if (!_com || !_com->parent || !_neck || !_neck->parent || !_spine1 || !_spine1->parent || !_thighs[0] || !_thighs[1] || !_calves[0] || !_calves[1] || !_feet[0] ||
+            !_feet[1]) {
             logger::warn("Skeleton initialization failed: missing torso or leg nodes for posture solving.");
             return false;
         }
@@ -649,8 +648,8 @@ namespace frik
 
         _forwardDir = MatrixUtils::rotateXY(RE::NiPoint3(newRot.entry[1][0], newRot.entry[1][1], 0), neckYaw * 0.7f);
         _liveBodyForward = _forwardDir;
-        if (const auto* room = _playerNodes->roomnode; room && isFiniteTransform(room->world) && std::isfinite(_forwardDir.x) && std::isfinite(_forwardDir.y) &&
-            MatrixUtils::vec3Len(_forwardDir) > 0.0001f) {
+        if (const auto* room = _playerNodes->roomnode;
+            room && isFiniteTransform(room->world) && std::isfinite(_forwardDir.x) && std::isfinite(_forwardDir.y) && MatrixUtils::vec3Len(_forwardDir) > 0.0001f) {
             if (_lowPosture.requestedBlend <= 0.0f || !_lowPostureHeadingValid) {
                 _lowPostureRoomForward = room->world.rotate * MatrixUtils::vec3Norm(_forwardDir);
                 _lowPostureHeadingValid = true;
@@ -785,8 +784,8 @@ namespace frik
             const auto targetHeadRotation = _headRestLocal.rotate * restNeckWorld.rotate * _root->world.rotate.Transpose() * _playerNodes->HmdNode->world.rotate;
             targetNeckRotation = _headRestLocal.rotate.Transpose() * targetHeadRotation;
             const auto headLook = _playerNodes->HmdNode->world.rotate.Transpose() * RE::NiPoint3(0, 1, 0);
-            const float clearance = (std::max)(0.0f, g_config.headBackPositionOffset) * _root->world.scale +
-                0.5f * MatrixUtils::vec3Len(_headRestLocal.translate) * restNeckWorld.scale;
+            const float clearance =
+                (std::max)(0.0f, g_config.headBackPositionOffset) * _root->world.scale + 0.5f * MatrixUtils::vec3Len(_headRestLocal.translate) * restNeckWorld.scale;
             targetHeadPosition = _curentPosition - headLook * clearance;
             const auto trackedNeck = targetHeadPosition - targetNeckRotation.Transpose() * (_headRestLocal.translate * restNeckWorld.scale);
             targetNeck += (trackedNeck - targetNeck) * orientationAmount;
@@ -833,8 +832,8 @@ namespace frik
             updateDown(_neck, true);
         }
         const auto armPoseDelta = blendRotation(MatrixUtils::getIdentityMatrix(), _floorPoseDelta, blend);
-        if (!isFiniteTransform(com->world) || !isFiniteTransform(neck->world) || !isFiniteTransform(_head->world) ||
-            !isFiniteTransform(_feet[0]->world) || !isFiniteTransform(_feet[1]->world) || !isFiniteRotation(armPoseDelta)) {
+        if (!isFiniteTransform(com->world) || !isFiniteTransform(neck->world) || !isFiniteTransform(_head->world) || !isFiniteTransform(_feet[0]->world) ||
+            !isFiniteTransform(_feet[1]->world) || !isFiniteRotation(armPoseDelta)) {
             com->local = normalComLocal;
             spine->local = normalSpineLocal;
             _neck->local = restNeckLocal;
@@ -1578,32 +1577,52 @@ namespace frik
         const auto headLook = _playerNodes->HmdNode->world.rotate.Transpose() * RE::NiPoint3(0, 1, 0);
         _lowPosture.headViewDistance = MatrixUtils::vec3Dot(_head->world.translate - _curentPosition, headLook);
         const int orientationCue = _lowPosture.headFaceUp > 0.6f ? 1 : std::abs(_lowPosture.headRightUp) > 0.7f ? 2 : 0;
-        const auto phase = _lowPosture.requestedBlend <= 0.0f ? LowPosturePhase::Upright :
-            !_lowPosture.poseValid ? LowPosturePhase::Rejected :
-            _lowPosture.appliedBlend < 0.999f ? LowPosturePhase::Transition :
-            _lowPosture.bodyFrontUp > 0.5f ? LowPosturePhase::Supine :
-            _lowPosture.bodyFrontUp < -0.5f ? LowPosturePhase::Prone : LowPosturePhase::Side;
-        const bool changed = phase != _reportedLowPosturePhase || orientationCue != _reportedOrientationCue ||
-            _lowPosture.orientationTracked != _reportedOrientationTracked;
+        const auto phase = _lowPosture.requestedBlend <= 0.0f  ? LowPosturePhase::Upright
+                           : !_lowPosture.poseValid            ? LowPosturePhase::Rejected
+                           : _lowPosture.appliedBlend < 0.999f ? LowPosturePhase::Transition
+                           : _lowPosture.bodyFrontUp > 0.5f    ? LowPosturePhase::Supine
+                           : _lowPosture.bodyFrontUp < -0.5f   ? LowPosturePhase::Prone
+                                                               : LowPosturePhase::Side;
+        const bool changed = phase != _reportedLowPosturePhase || orientationCue != _reportedOrientationCue || _lowPosture.orientationTracked != _reportedOrientationTracked;
         if (changed && _timer.QuadPart - _lastLowPostureLogTick >= _freqCounter.QuadPart) {
             _lastLowPostureLogTick = _timer.QuadPart;
             _reportedLowPosturePhase = phase;
             _reportedOrientationCue = orientationCue;
             _reportedOrientationTracked = _lowPosture.orientationTracked;
-            const char* name = phase == LowPosturePhase::Upright ? "upright" : phase == LowPosturePhase::Transition ? "transition" :
-                phase == LowPosturePhase::Prone ? "prone" : phase == LowPosturePhase::Supine ? "supine" : phase == LowPosturePhase::Side ? "side" : "rejected";
+            const char* name = phase == LowPosturePhase::Upright      ? "upright"
+                               : phase == LowPosturePhase::Transition ? "transition"
+                               : phase == LowPosturePhase::Prone      ? "prone"
+                               : phase == LowPosturePhase::Supine     ? "supine"
+                               : phase == LowPosturePhase::Side       ? "side"
+                                                                      : "rejected";
             // Final scene-graph evidence, after body, legs, arms and engine bounds/bone publication in this same frame.
             logger::info(
                 "LowPosture {}: physical={:.3f}m standing={:.3f}m requested={:.3f} applied={:.3f} tracking={} pose={} "
                 "orientation={} cueValid={} faceUp={:.3f} rightUp={:.3f} bodyFrontUp={:.3f} headViewDistance={:.2f} "
                 "floorZ={:.2f} cameraZ={:.2f} hipZ={:.2f} neckZ={:.2f} feetZ=({:.2f},{:.2f}) handsFinite=({},{}) rootFlags={} scopeHide={}",
-                name, _lowPosture.physicalHeightMeters, _lowPosture.standingHeightMeters, _lowPosture.requestedBlend, _lowPosture.appliedBlend,
-                _lowPosture.trackingValid, _lowPosture.poseValid, _lowPosture.orientationTracked, _lowPosture.orientationCueValid,
-                _lowPosture.headFaceUp, _lowPosture.headRightUp, _lowPosture.bodyFrontUp, _lowPosture.headViewDistance,
-                _root->world.translate.z, _curentPosition.z, _com->world.translate.z, _neck->world.translate.z,
-                _feet[0]->world.translate.z, _feet[1]->world.translate.z,
-                _leftArm.hand && isFiniteTransform(_leftArm.hand->world), _rightArm.hand && isFiniteTransform(_rightArm.hand->world),
-                static_cast<std::uint64_t>(_root->flags.flags), g_frik.shouldHideBodyInScope());
+                name,
+                _lowPosture.physicalHeightMeters,
+                _lowPosture.standingHeightMeters,
+                _lowPosture.requestedBlend,
+                _lowPosture.appliedBlend,
+                _lowPosture.trackingValid,
+                _lowPosture.poseValid,
+                _lowPosture.orientationTracked,
+                _lowPosture.orientationCueValid,
+                _lowPosture.headFaceUp,
+                _lowPosture.headRightUp,
+                _lowPosture.bodyFrontUp,
+                _lowPosture.headViewDistance,
+                _root->world.translate.z,
+                _curentPosition.z,
+                _com->world.translate.z,
+                _neck->world.translate.z,
+                _feet[0]->world.translate.z,
+                _feet[1]->world.translate.z,
+                _leftArm.hand && isFiniteTransform(_leftArm.hand->world),
+                _rightArm.hand && isFiniteTransform(_rightArm.hand->world),
+                static_cast<std::uint64_t>(_root->flags.flags),
+                g_frik.shouldHideBodyInScope());
         }
         for (const bool isLeft : { true, false }) {
             if (const auto* hand = getArm(isLeft).hand) {
