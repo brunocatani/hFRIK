@@ -102,6 +102,18 @@ namespace frik
 
         static float getAdjustedPlayerHMDOffset();
 
+        struct LowPostureStatus
+        {
+            float physicalHeightMeters = 0;
+            float standingHeightMeters = 0;
+            float requestedBlend = 0;
+            float appliedBlend = 0;
+            bool trackingValid = false;
+            bool poseValid = false;
+        };
+
+        const LowPostureStatus& getLowPostureStatus() const { return _lowPosture; }
+
         void onFrameUpdate();
 
     private:
@@ -126,6 +138,8 @@ namespace frik
         void setupHead(float neckYaw, float neckPitch) const;
         void setBodyUnderHMD(float neckYaw, float neckPitch);
         void setBodyPosture(float neckPitch);
+        void updateLowPosture();
+        void setLowPostureLeg(bool isLeft);
         void setKneePos();
         void walk();
         void setSingleLeg(bool isLeft) const;
@@ -182,6 +196,23 @@ namespace frik
         float _legLen;
         ArmNodes _rightArm;
         ArmNodes _leftArm;
+
+        // Non-owning nodes, valid for this Skeleton's lifetime; rebuilt together on load/armor changes.
+        RE::NiNode* _com = nullptr;
+        RE::NiNode* _neck = nullptr;
+        RE::NiNode* _spine1 = nullptr;
+        std::array<RE::NiNode*, 2> _thighs{};
+        std::array<RE::NiNode*, 2> _calves{};
+        std::array<RE::NiNode*, 2> _feet{};
+        LowPostureStatus _lowPosture;
+        enum class LowPosturePhase { Upright, Transition, Prone, Rejected };
+        LowPosturePhase _reportedLowPosturePhase = LowPosturePhase::Upright;
+        std::int64_t _lastLowPostureLogTick = 0;
+        const RE::Setting* _vrScaleSetting = nullptr; // borrowed from the game's settings, reacquired on skeleton rebuild
+        RE::NiPoint3 _liveBodyForward{ 0, 1, 0 };
+        RE::NiPoint3 _lowPostureRoomForward{ 0, 1, 0 };
+        bool _lowPostureHeadingValid = false;
+        std::array<RE::NiPoint3, 2> _lowPostureFootTargets{};
         // flattened bone tree index by bone name, for API bone reads
         std::unordered_map<std::string, int> _boneIndexByName;
 

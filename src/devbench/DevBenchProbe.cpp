@@ -691,6 +691,15 @@ namespace frik::devbench
             out["hideBodyInScope"] = g_frik.shouldHideBodyInScope();
             out["lookingThrough"] = g_frik.isLookingThroughScope();
             out["inScopeMenu"] = g_frik.isInScopeMenu();
+            if (const auto* skeleton = g_frik.getSkeleton()) {
+                const auto& posture = skeleton->getLowPostureStatus();
+                out["lowPosture"] = { { "physicalHeightMeters", posture.physicalHeightMeters },
+                    { "standingHeightMeters", posture.standingHeightMeters },
+                    { "requestedBlend", posture.requestedBlend },
+                    { "appliedBlend", posture.appliedBlend },
+                    { "trackingValid", posture.trackingValid },
+                    { "poseValid", posture.poseValid } };
+            }
             return out.dump();
         }
 
