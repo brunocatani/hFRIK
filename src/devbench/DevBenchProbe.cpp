@@ -698,7 +698,13 @@ namespace frik::devbench
                     { "requestedBlend", posture.requestedBlend },
                     { "appliedBlend", posture.appliedBlend },
                     { "trackingValid", posture.trackingValid },
-                    { "poseValid", posture.poseValid } };
+                    { "poseValid", posture.poseValid },
+                    { "orientationTracked", posture.orientationTracked },
+                    { "orientationCueValid", posture.orientationCueValid },
+                    { "headFaceUp", posture.headFaceUp },
+                    { "headRightUp", posture.headRightUp },
+                    { "bodyFrontUp", posture.bodyFrontUp },
+                    { "headViewDistance", posture.headViewDistance } };
             }
             return out.dump();
         }

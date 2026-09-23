@@ -110,6 +110,12 @@ namespace frik
             float appliedBlend = 0;
             bool trackingValid = false;
             bool poseValid = false;
+            bool orientationTracked = false;
+            bool orientationCueValid = false;
+            float headFaceUp = 0;
+            float headRightUp = 0;
+            float bodyFrontUp = -1;
+            float headViewDistance = 0;
         };
 
         const LowPostureStatus& getLowPostureStatus() const { return _lowPosture; }
@@ -124,6 +130,8 @@ namespace frik
         {
             _curentPosition = RE::NiPoint3(0, 0, 0);
             _walkingState = 0;
+            _floorPoseDelta.MakeIdentity();
+            _armPoseDelta.MakeIdentity();
         }
 
         // initialization
@@ -139,6 +147,7 @@ namespace frik
         void setBodyUnderHMD(float neckYaw, float neckPitch);
         void setBodyPosture(float neckPitch);
         void updateLowPosture();
+        void updateLowPostureOrientation();
         void setLowPostureLeg(bool isLeft);
         void setKneePos();
         void walk();
@@ -205,13 +214,21 @@ namespace frik
         std::array<RE::NiNode*, 2> _calves{};
         std::array<RE::NiNode*, 2> _feet{};
         LowPostureStatus _lowPosture;
-        enum class LowPosturePhase { Upright, Transition, Prone, Rejected };
+        enum class LowPosturePhase { Upright, Transition, Prone, Side, Supine, Rejected };
         LowPosturePhase _reportedLowPosturePhase = LowPosturePhase::Upright;
+        int _reportedOrientationCue = 0;
+        bool _reportedOrientationTracked = false;
         std::int64_t _lastLowPostureLogTick = 0;
         const RE::Setting* _vrScaleSetting = nullptr; // borrowed from the game's settings, reacquired on skeleton rebuild
         RE::NiPoint3 _liveBodyForward{ 0, 1, 0 };
         RE::NiPoint3 _lowPostureRoomForward{ 0, 1, 0 };
         bool _lowPostureHeadingValid = false;
+        bool _floorOrientationLatched = false;
+        RE::NiPoint3 _floorHeadwardRoom{ 0, 1, 0 };
+        RE::NiMatrix3 _floorFrameRoom{};
+        RE::NiMatrix3 _floorPoseDelta{};
+        RE::NiMatrix3 _armPoseDelta{};
+        RE::NiTransform _headRestLocal{};
         std::array<RE::NiPoint3, 2> _lowPostureFootTargets{};
         // flattened bone tree index by bone name, for API bone reads
         std::unordered_map<std::string, int> _boneIndexByName;

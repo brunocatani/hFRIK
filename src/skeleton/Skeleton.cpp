@@ -53,6 +53,23 @@ namespace frik
             a.normalize();
             return a.getMatrix();
         }
+
+        RE::NiMatrix3 frameRotation(const lowposture::FloorFrame& frame)
+        {
+            RE::NiMatrix3 rotation;
+            for (int i = 0; i < 3; ++i) {
+                rotation.entry[0][i] = frame.right[i];
+                rotation.entry[1][i] = frame.front[i];
+                rotation.entry[2][i] = frame.headward[i];
+            }
+            return rotation;
+        }
+
+        RE::NiPoint3 rotateAboutUp(const RE::NiPoint3& vector, const RE::NiPoint3& up, const float angle)
+        {
+            return vector * std::cos(angle) + MatrixUtils::vec3Cross(up, vector) * std::sin(angle) +
+                up * (MatrixUtils::vec3Dot(up, vector) * (1.0f - std::cos(angle)));
+        }
     }
 
     /**
@@ -226,6 +243,9 @@ namespace frik
                 transform.translate = defaultTransform.translate;
                 transform.rotate = defaultTransform.rotate;
                 _skeletonNodesToDefaultTransforms.emplace_back(node, transform);
+                if (node == _head) {
+                    _headRestLocal = transform;
+                }
             } else {
                 logger::warn("Skeleton bone node not found for '{}'", boneName.c_str());
             }
@@ -301,6 +321,7 @@ namespace frik
             logger::trace("Set body under HMD");
             setBodyUnderHMD(neckYaw, neckPitch);
             updateDownFromRoot(); // Do world update now so that IK calculations have proper world reference
+            updateLowPostureOrientation();
         }
 
         {
@@ -533,6 +554,7 @@ namespace frik
     void Skeleton::updateLowPosture()
     {
         _lowPosture = {};
+        _armPoseDelta.MakeIdentity();
         auto* system = vr::VRSystem();
         if (system && _vrScaleSetting) {
             // HMD is device zero. Request one pose on the existing skeleton thread, in OpenVR's floor-relative universe.
@@ -552,6 +574,57 @@ namespace frik
             _lowPostureHeadingValid = false;
             logger::sample(5000, "LowPosture: unavailable physical HMD height/calibration; no prone override applied");
         }
+    }
+
+    void Skeleton::updateLowPostureOrientation()
+    {
+        _floorPoseDelta.MakeIdentity();
+        if (!_lowPosture.trackingValid || _lowPosture.requestedBlend <= 0.0f) {
+            _floorOrientationLatched = false;
+            return;
+        }
+        const auto* room = _playerNodes->roomnode;
+        const auto* hmd = _playerNodes->HmdNode;
+        if (!room || !hmd || !isFiniteTransform(room->world) || !isFiniteTransform(hmd->world)) {
+            _floorOrientationLatched = false;
+            logger::sample(1000, "LowPosture orientation: invalid room/HMD transform; no orientation override");
+            return;
+        }
+        const auto headRight = hmd->world.rotate.Transpose() * RE::NiPoint3(1, 0, 0);
+        const auto headTop = hmd->world.rotate.Transpose() * RE::NiPoint3(0, 0, 1);
+        const auto headLook = hmd->world.rotate.Transpose() * RE::NiPoint3(0, 1, 0);
+        _lowPosture.headFaceUp = headLook.z;
+        _lowPosture.headRightUp = headRight.z;
+        const auto baseline = lowposture::floorFrame(_forwardDir.x, _forwardDir.y, 0.0f);
+        if (!baseline) {
+            return;
+        }
+        const auto baselineWorld = frameRotation(*baseline);
+        if (!_floorOrientationLatched) {
+            if (!lowposture::hasOrientationCue(_lowPosture.requestedBlend, headLook.z, headRight.z, std::hypot(headTop.x, headTop.y))) {
+                return; // preserve the tested belly-down pose while the head supplies no clear side/back cue
+            }
+            _floorHeadwardRoom = room->world.rotate * MatrixUtils::vec3Norm(RE::NiPoint3(headTop.x, headTop.y, 0));
+            _floorFrameRoom = baselineWorld * room->world.rotate.Transpose();
+            _floorOrientationLatched = true;
+        }
+
+        // Head-to-feet direction is latched in the room frame. Head turns cannot reverse the body,
+        // and artificial player turns carry the complete pose without a stale world-space anchor.
+        const auto headward = room->world.rotate.Transpose() * _floorHeadwardRoom;
+        const auto across = MatrixUtils::vec3Norm(RE::NiPoint3(headward.y, -headward.x, 0));
+        if (const auto roll = lowposture::bodyRoll(headRight.z, MatrixUtils::vec3Dot(headRight, across))) {
+            if (const auto target = lowposture::floorFrame(headward.x, headward.y, *roll)) {
+                const auto targetRoom = frameRotation(*target) * room->world.rotate.Transpose();
+                _floorFrameRoom = blendRotation(_floorFrameRoom, targetRoom, lowposture::orientationMoveFraction(_frameTime));
+                _lowPosture.orientationCueValid = true;
+            }
+        }
+        // When looking along the latched body axis, roll is unobservable: retain the last resolved orientation.
+        const auto frameWorld = _floorFrameRoom * room->world.rotate;
+        _floorPoseDelta = baselineWorld.Transpose() * frameWorld;
+        _lowPosture.orientationTracked = true;
+        _lowPosture.bodyFrontUp = frameWorld.entry[1][2];
     }
 
     /**
@@ -623,6 +696,7 @@ namespace frik
         const auto restSpineLocal = spine->local;
         const auto restNeckWorld = neck->world;
         const auto restNeckLocal = neck->local;
+        const auto restHeadLocal = _head->local;
         const std::array<RE::NiTransform, 2> restFeet{ _feet[0]->world, _feet[1]->world };
 
         _leftKneePos = _calves[0]->world.translate;
@@ -693,9 +767,30 @@ namespace frik
         }
         const auto forward = MatrixUtils::vec3Norm(_forwardDir);
         RE::NiTransform proneCom = restCom;
-        proneCom.rotate = restCom.rotate * rotationFromTo(forward, torso);
+        proneCom.rotate = restCom.rotate * rotationFromTo(forward, torso) * _floorPoseDelta;
         const auto neckInCom = MatrixUtils::worldToLocalPoint(restCom, restNeckWorld.translate);
-        const auto targetNeck = _curentPosition - forward * (headLength + g_config.headBackPositionOffset * _root->world.scale) - RE::NiPoint3(0, 0, headLength * 0.25f);
+        const auto headward = _floorPoseDelta.Transpose() * forward;
+        auto targetNeck = _curentPosition - headward * (headLength + g_config.headBackPositionOffset * _root->world.scale) - RE::NiPoint3(0, 0, headLength * 0.25f);
+        const float orientationAmount = std::clamp(1.0f + _lowPosture.bodyFrontUp, 0.0f, 1.0f);
+        const float headWeight = blend * orientationAmount;
+        RE::NiPoint3 targetHeadPosition{};
+        RE::NiMatrix3 targetNeckRotation{};
+        if (headWeight > 0.0f) {
+            if (_head->parent != _neck || !isFiniteTransform(_headRestLocal) || !isFiniteTransform(_playerNodes->HmdNode->world)) {
+                logger::sample(1000, "LowPosture orientation: cannot anchor head to HMD; invalid head/neck chain");
+                return;
+            }
+            // Map the authored head axes onto the actual headset orientation. Pitch/yaw/roll are supplied once,
+            // independently of the rotated torso; the standing setupHead correction must not be applied twice.
+            const auto targetHeadRotation = _headRestLocal.rotate * restNeckWorld.rotate * _root->world.rotate.Transpose() * _playerNodes->HmdNode->world.rotate;
+            targetNeckRotation = _headRestLocal.rotate.Transpose() * targetHeadRotation;
+            const auto headLook = _playerNodes->HmdNode->world.rotate.Transpose() * RE::NiPoint3(0, 1, 0);
+            const float clearance = (std::max)(0.0f, g_config.headBackPositionOffset) * _root->world.scale +
+                0.5f * MatrixUtils::vec3Len(_headRestLocal.translate) * restNeckWorld.scale;
+            targetHeadPosition = _curentPosition - headLook * clearance;
+            const auto trackedNeck = targetHeadPosition - targetNeckRotation.Transpose() * (_headRestLocal.translate * restNeckWorld.scale);
+            targetNeck += (trackedNeck - targetNeck) * orientationAmount;
+        }
         proneCom.translate = targetNeck - proneCom.rotate.Transpose() * (neckInCom * proneCom.scale);
 
         std::array<RE::NiPoint3, 2> proneFeet{};
@@ -725,17 +820,32 @@ namespace frik
         // The torso goes horizontal; retain the upright neck's world orientation so the head does not tip into the floor with it.
         const auto proneNeckLocalRotation = restNeckWorld.rotate * rotationFromTo(_liveBodyForward, _forwardDir) * neck->parent->world.rotate.Transpose();
         _neck->local.rotate = blendRotation(restNeckLocal.rotate, proneNeckLocalRotation, blend);
+        if (headWeight > 0.0f) {
+            _head->local.rotate = blendRotation(restHeadLocal.rotate, _headRestLocal.rotate, headWeight);
+            _head->local.translate += (_headRestLocal.translate - restHeadLocal.translate) * headWeight;
+            _neck->local.rotate = blendRotation(_neck->local.rotate, targetNeckRotation * neck->parent->world.rotate.Transpose(), headWeight);
+        }
         updateDownFromRoot();
-        if (!isFiniteTransform(com->world) || !isFiniteTransform(neck->world) || !isFiniteTransform(_feet[0]->world) || !isFiniteTransform(_feet[1]->world)) {
+        if (headWeight > 0.0f) {
+            // Ground clearance can lift the torso; it must not lift the skull through the eye position.
+            const auto eyeCorrection = (targetHeadPosition - _head->world.translate) * headWeight;
+            _neck->local.translate += neck->parent->world.rotate * (eyeCorrection / neck->parent->world.scale);
+            updateDown(_neck, true);
+        }
+        const auto armPoseDelta = blendRotation(MatrixUtils::getIdentityMatrix(), _floorPoseDelta, blend);
+        if (!isFiniteTransform(com->world) || !isFiniteTransform(neck->world) || !isFiniteTransform(_head->world) ||
+            !isFiniteTransform(_feet[0]->world) || !isFiniteTransform(_feet[1]->world) || !isFiniteRotation(armPoseDelta)) {
             com->local = normalComLocal;
             spine->local = normalSpineLocal;
             _neck->local = restNeckLocal;
+            _head->local = restHeadLocal;
             updateDownFromRoot();
             logger::sample(1000, "LowPosture: rejected invalid solved transforms; restored crouch pose");
             return;
         }
         _lowPosture.appliedBlend = blend;
         _lowPosture.poseValid = true;
+        _armPoseDelta = armPoseDelta;
     }
 
     void Skeleton::setLowPostureLeg(const bool isLeft)
@@ -1465,20 +1575,32 @@ namespace frik
 
     void Skeleton::latchRenderedWrists()
     {
+        const auto headLook = _playerNodes->HmdNode->world.rotate.Transpose() * RE::NiPoint3(0, 1, 0);
+        _lowPosture.headViewDistance = MatrixUtils::vec3Dot(_head->world.translate - _curentPosition, headLook);
+        const int orientationCue = _lowPosture.headFaceUp > 0.6f ? 1 : std::abs(_lowPosture.headRightUp) > 0.7f ? 2 : 0;
         const auto phase = _lowPosture.requestedBlend <= 0.0f ? LowPosturePhase::Upright :
             !_lowPosture.poseValid ? LowPosturePhase::Rejected :
-            _lowPosture.appliedBlend >= 1.0f ? LowPosturePhase::Prone : LowPosturePhase::Transition;
-        if (phase != _reportedLowPosturePhase && _timer.QuadPart - _lastLowPostureLogTick >= _freqCounter.QuadPart) {
+            _lowPosture.appliedBlend < 0.999f ? LowPosturePhase::Transition :
+            _lowPosture.bodyFrontUp > 0.5f ? LowPosturePhase::Supine :
+            _lowPosture.bodyFrontUp < -0.5f ? LowPosturePhase::Prone : LowPosturePhase::Side;
+        const bool changed = phase != _reportedLowPosturePhase || orientationCue != _reportedOrientationCue ||
+            _lowPosture.orientationTracked != _reportedOrientationTracked;
+        if (changed && _timer.QuadPart - _lastLowPostureLogTick >= _freqCounter.QuadPart) {
             _lastLowPostureLogTick = _timer.QuadPart;
             _reportedLowPosturePhase = phase;
+            _reportedOrientationCue = orientationCue;
+            _reportedOrientationTracked = _lowPosture.orientationTracked;
             const char* name = phase == LowPosturePhase::Upright ? "upright" : phase == LowPosturePhase::Transition ? "transition" :
-                phase == LowPosturePhase::Prone ? "prone" : "rejected";
+                phase == LowPosturePhase::Prone ? "prone" : phase == LowPosturePhase::Supine ? "supine" : phase == LowPosturePhase::Side ? "side" : "rejected";
             // Final scene-graph evidence, after body, legs, arms and engine bounds/bone publication in this same frame.
             logger::info(
                 "LowPosture {}: physical={:.3f}m standing={:.3f}m requested={:.3f} applied={:.3f} tracking={} pose={} "
+                "orientation={} cueValid={} faceUp={:.3f} rightUp={:.3f} bodyFrontUp={:.3f} headViewDistance={:.2f} "
                 "floorZ={:.2f} cameraZ={:.2f} hipZ={:.2f} neckZ={:.2f} feetZ=({:.2f},{:.2f}) handsFinite=({},{}) rootFlags={} scopeHide={}",
                 name, _lowPosture.physicalHeightMeters, _lowPosture.standingHeightMeters, _lowPosture.requestedBlend, _lowPosture.appliedBlend,
-                _lowPosture.trackingValid, _lowPosture.poseValid, _root->world.translate.z, _curentPosition.z, _com->world.translate.z, _neck->world.translate.z,
+                _lowPosture.trackingValid, _lowPosture.poseValid, _lowPosture.orientationTracked, _lowPosture.orientationCueValid,
+                _lowPosture.headFaceUp, _lowPosture.headRightUp, _lowPosture.bodyFrontUp, _lowPosture.headViewDistance,
+                _root->world.translate.z, _curentPosition.z, _com->world.translate.z, _neck->world.translate.z,
                 _feet[0]->world.translate.z, _feet[1]->world.translate.z,
                 _leftArm.hand && isFiniteTransform(_leftArm.hand->world), _rightArm.hand && isFiniteTransform(_rightArm.hand->world),
                 static_cast<std::uint64_t>(_root->flags.flags), g_frik.shouldHideBodyInScope());
@@ -1573,8 +1695,10 @@ namespace frik
 
         float adjustAmount = (std::clamp)(MatrixUtils::vec3Len(shoulderToHand) - armLength * 0.5f, 0.0f, armLength * 0.85f) / (armLength * 0.85f);
         RE::NiPoint3 shoulderOffset = MatrixUtils::vec3Norm(shoulderToHand) * (adjustAmount * armLength * g_config.armShoulderReachFraction);
-        if (shoulderOffset.z < 0.0f) {
-            shoulderOffset.z *= g_config.armShoulderDownwardDamp;
+        const auto upDir = _armPoseDelta.Transpose() * RE::NiPoint3(0, 0, 1);
+        const float shoulderDown = MatrixUtils::vec3Dot(shoulderOffset, upDir);
+        if (shoulderDown < 0.0f) {
+            shoulderOffset += upDir * (shoulderDown * (g_config.armShoulderDownwardDamp - 1.0f));
         }
 
         RE::NiPoint3 clavicalToNewShoulder = arm.upper->world.translate + shoulderOffset - arm.shoulder->world.translate;
@@ -1635,21 +1759,23 @@ namespace frik
             triangleLen = (std::max)(hsLen, reachAtMaxFlexion);
         }
 
-        RE::NiPoint3 forwardDir = MatrixUtils::vec3Norm(_forwardDir);
-        RE::NiPoint3 sidewaysDir = MatrixUtils::vec3Norm(_sidewaysRDir * negLeft);
+        // Rotate the tested belly/upright arm reference with the body. All projections below must use the same
+        // frame: mixing world Z with a rolled shoulder frame inverts the elbow window when lying on the back.
+        RE::NiPoint3 forwardDir = _armPoseDelta.Transpose() * MatrixUtils::vec3Norm(_forwardDir);
+        RE::NiPoint3 sidewaysDir = _armPoseDelta.Transpose() * MatrixUtils::vec3Norm(_sidewaysRDir * negLeft);
 
         // The primary twist angle comes from the direction the wrist is pointing into the forearm
         RE::NiPoint3 handBack = handRot.Transpose() * (RE::NiPoint3(-1, 0, 0));
-        float twistAngle = asinf((std::clamp)(handBack.z, -0.999f, 0.999f));
+        const float handBackUp = MatrixUtils::vec3Dot(handBack, upDir);
+        float twistAngle = asinf((std::clamp)(handBackUp, -0.999f, 0.999f));
 
         // The second twist angle comes from a side vector pointing "outward" from the side of the wrist
         RE::NiPoint3 handSide = handRot.Transpose() * (RE::NiPoint3(0, -1, 0));
         RE::NiPoint3 handInSide = handSide * negLeft;
-        float twistAngle2 = -1 * asinf((std::clamp)(handSide.z, -0.599f, 0.999f));
+        float twistAngle2 = -1 * asinf((std::clamp)(MatrixUtils::vec3Dot(handSide, upDir), -0.599f, 0.999f));
 
         // Blend the two twist angles together, using the primary angle more when the wrist is pointing downward
-        //float interpTwist = (std::clamp)((handBack.z + 0.866f) * 1.155f, 0.25f, 0.8f); // 0 to 1 as hand points 60 degrees down to horizontal
-        float interpTwist = (std::clamp)((handBack.z + 0.866f) * 1.155f, 0.45f, 0.8f); // 0 to 1 as hand points 60 degrees down to horizontal
+        float interpTwist = (std::clamp)((handBackUp + 0.866f) * 1.155f, 0.45f, 0.8f); // 0 to 1 as hand points 60 degrees down to horizontal in the body frame
         //		logger::info("%2f %2f %2f", rads_to_degrees(twistAngle), rads_to_degrees(twistAngle2), interpTwist);
         twistAngle = twistAngle + interpTwist * (twistAngle2 - twistAngle);
         // Wonkiness is bad.  Interpolate twist angle towards zero to correct it when the angles are pointed a certain way.
@@ -1667,20 +1793,18 @@ namespace frik
 
         // Calculate the hand's distance behind the body - It will increase the minimum elbow rotation angle
         float size = 1.0;
-        float behindD = -(forwardDir.x * arm.shoulder->world.translate.x + forwardDir.y * arm.shoulder->world.translate.y) - 10.0f;
-        float handBehindDist = -(handPos.x * forwardDir.x + handPos.y * forwardDir.y + behindD);
+        const auto shoulderToWrist = handPos - arm.shoulder->world.translate;
+        float handBehindDist = 10.0f - MatrixUtils::vec3Dot(shoulderToWrist, forwardDir);
         float behindAmount = (std::clamp)(handBehindDist / (40.0f * size), 0.0f, 1.0f);
 
         // Holding hands in front of chest increases the minimum elbow rotation angle (elbows lift) and decreases the maximum angle
-        RE::NiPoint3 planeDir = MatrixUtils::rotateXY(forwardDir, negLeft * MatrixUtils::degreesToRads(135));
-        float planeD = -(planeDir.x * arm.shoulder->world.translate.x + planeDir.y * arm.shoulder->world.translate.y) + 16.0f * size;
-        float armCrossAmount = (std::clamp)((handPos.x * planeDir.x + handPos.y * planeDir.y + planeD) / (20.0f * size), 0.0f, 1.0f);
+        RE::NiPoint3 planeDir = rotateAboutUp(forwardDir, upDir, negLeft * MatrixUtils::degreesToRads(135));
+        float armCrossAmount = (std::clamp)((MatrixUtils::vec3Dot(shoulderToWrist, planeDir) + 16.0f * size) / (20.0f * size), 0.0f, 1.0f);
 
         // The arm lift limits how much the crossing amount can influence minimum elbow rotation
         // The maximum rotation is also decreased as hands lift higher (elbows point further downward)
-        float armLiftLimitZ = _chest->world.translate.z * size;
         float armLiftThreshold = 60.0f * size;
-        float armLiftLimit = (std::clamp)((armLiftLimitZ + armLiftThreshold - handPos.z) / armLiftThreshold, 0.0f, 1.0f); // 1 at bottom, 0 at top
+        float armLiftLimit = (std::clamp)((MatrixUtils::vec3Dot(_chest->world.translate - handPos, upDir) + armLiftThreshold) / armLiftThreshold, 0.0f, 1.0f);
         float upLimit = (std::clamp)((1.0f - armLiftLimit) * 1.4f, 0.0f, 1.0f); // 0 at bottom, 1 at a much lower top
 
         // Determine overall amount the elbows minimum rotation will be limited. The blends are smooth across their switch points
@@ -1711,8 +1835,7 @@ namespace frik
         RE::NiPoint3 xDir = MatrixUtils::vec3Norm(handToShoulder);
 
         // Get the final "Y" vector, perpendicular to "X", and pointing in elbow direction (as in the diagram above)
-        float sideD = -(sidewaysDir.x * arm.shoulder->world.translate.x + sidewaysDir.y * arm.shoulder->world.translate.y) - 1.0f * 8.0f;
-        float acrossAmount = -(handPos.x * sidewaysDir.x + handPos.y * sidewaysDir.y + sideD) / (16.0f * 1.0f);
+        float acrossAmount = (8.0f - MatrixUtils::vec3Dot(shoulderToWrist, sidewaysDir)) / 16.0f;
         float handSideTwistOutward = MatrixUtils::vec3Dot(handSide, MatrixUtils::vec3Norm(sidewaysDir + forwardDir * 0.5f));
         float armTwist = (std::clamp)(handSideTwistOutward - (std::max)(0.0f, acrossAmount + 0.25f), 0.0f, 1.0f);
 
@@ -1724,7 +1847,7 @@ namespace frik
         const float acrossTwist = acrossAmount * MatrixUtils::degreesToRads(90);
         const float behindHeadTwist = handBehindHead * MatrixUtils::degreesToRads(120);
         float elbowsTwistForward = smoothBlends ? smoothMax(acrossTwist, behindHeadTwist, kAngleBand) : (std::max)(acrossTwist, behindHeadTwist);
-        RE::NiPoint3 elbowDir = MatrixUtils::rotateXY(bendDownDir, -negLeft * (MatrixUtils::degreesToRads(150) - armTwist * MatrixUtils::degreesToRads(25) - elbowsTwistForward));
+        RE::NiPoint3 elbowDir = rotateAboutUp(bendDownDir, upDir, -negLeft * (MatrixUtils::degreesToRads(150) - armTwist * MatrixUtils::degreesToRads(25) - elbowsTwistForward));
         RE::NiPoint3 yDir = elbowDir - xDir * MatrixUtils::vec3Dot(elbowDir, xDir);
         yDir = MatrixUtils::vec3Norm(yDir);
 
