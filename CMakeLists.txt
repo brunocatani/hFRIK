@@ -218,18 +218,21 @@ else()
 endif()
 
 # >>> Post build for release only to package the mod into a .7z file
-message(">>> Create post build command: package mod on release build")
-add_custom_command(
-  TARGET ${PROJECT_NAME}
-  POST_BUILD
-  COMMAND ${CMAKE_COMMAND}
-          -DPROJECT_NAME=${PROJECT_NAME}
-          -DPROJECT_FRIENDLY_NAME=${FRIENDLY_NAME}
-          -DPROJECT_VERSION=${PROJECT_VERSION}
-          -DROOT_DIR=${ROOT_DIR}
-          -DBUILD_DIR=${BUILD_DIR}
-          -DTARGET_FILE="$<TARGET_FILE:${PROJECT_NAME}>"
-          -DTARGET_PDB_FILE="$<TARGET_PDB_FILE:${PROJECT_NAME}>"
-          -DCONFIG=$(Configuration)
-          -P "${ROOT_DIR}/cmake/package.cmake"
-)
+option(FRIK_PACKAGE_ON_BUILD "Package the mod after a Release build" ON)
+if(FRIK_PACKAGE_ON_BUILD)
+  message(">>> Create post build command: package mod on release build")
+  add_custom_command(
+    TARGET ${PROJECT_NAME}
+    POST_BUILD
+    COMMAND ${CMAKE_COMMAND}
+            -DPROJECT_NAME=${PROJECT_NAME}
+            -DPROJECT_FRIENDLY_NAME=${FRIENDLY_NAME}
+            -DPROJECT_VERSION=${PROJECT_VERSION}
+            -DROOT_DIR=${ROOT_DIR}
+            -DBUILD_DIR=${BUILD_DIR}
+            -DTARGET_FILE="$<TARGET_FILE:${PROJECT_NAME}>"
+            -DTARGET_PDB_FILE="$<TARGET_PDB_FILE:${PROJECT_NAME}>"
+            -DCONFIG=$(Configuration)
+            -P "${ROOT_DIR}/cmake/package.cmake"
+  )
+endif()
