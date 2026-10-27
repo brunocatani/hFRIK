@@ -806,7 +806,8 @@ namespace frik
         updateDownFromRoot();
 
         // The torso goes horizontal; retain the upright neck's world orientation so the head does not tip into the floor with it.
-        const auto proneNeckLocalRotation = restNeckWorld.rotate * MatrixUtils::getMatrixFromRotateVectorVec(_liveBodyForward, _forwardDir) * neck->parent->world.rotate.Transpose();
+        const auto proneNeckLocalRotation =
+            restNeckWorld.rotate * MatrixUtils::getMatrixFromRotateVectorVec(_liveBodyForward, _forwardDir) * neck->parent->world.rotate.Transpose();
         _neck->local.rotate = blendRotation(restNeckLocal.rotate, proneNeckLocalRotation, blend);
         if (headWeight > 0.0f) {
             _head->local.rotate = blendRotation(restHeadLocal.rotate, _headRestLocal.rotate, headWeight);
