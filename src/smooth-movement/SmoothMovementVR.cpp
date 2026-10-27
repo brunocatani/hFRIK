@@ -2,7 +2,7 @@
 
 #include "Config.h"
 #include "FRIK.h"
-#include "devbench/PerfProbe.h"
+#include "perf/Perf.h"
 
 using namespace common;
 
@@ -58,18 +58,17 @@ namespace frik
             return;
         }
 
-        const auto playerNodes = f4vr::getPlayerNodes();
-        if (!playerNodes || !playerNodes->playerworldnode) {
+        const auto playerNodes = f4vr::getVRPlayerNodes();
+        if (!playerNodes || !playerNodes->playerWorldNode) {
             return;
         }
 
-        playerNodes->playerworldnode->local.translate = zeroPoint();
+        playerNodes->playerWorldNode->local.translate = zeroPoint();
     }
 
     void SmoothMovementVR::onFrameUpdate()
     {
-        static devbench::PerfProbe perf("SmoothMovementVR::onFrameUpdate");
-        const auto timer = perf.scope();
+        F4CF_PERF_FUNCTION();
 
         if (g_config.disableSmoothMovement) {
             return;
@@ -81,8 +80,8 @@ namespace frik
             return;
         }
 
-        const auto playerNodes = f4vr::getPlayerNodes();
-        if (!playerNodes || !playerNodes->playerworldnode) {
+        const auto playerNodes = f4vr::getVRPlayerNodes();
+        if (!playerNodes || !playerNodes->playerWorldNode) {
             resetState();
             return;
         }
@@ -104,8 +103,8 @@ namespace frik
                 _smoothedPos.y,
                 _smoothedPos.z);
             seedCurrentPosition(curPos);
-            playerNodes->playerworldnode->local.translate = zeroPoint();
-            playerNodes->playerworldnode->local.translate.z += Skeleton::getAdjustedPlayerHMDOffset();
+            playerNodes->playerWorldNode->local.translate = zeroPoint();
+            playerNodes->playerWorldNode->local.translate.z += Skeleton::getAdjustedPlayerHMDOffset();
             return;
         }
 
@@ -131,7 +130,7 @@ namespace frik
         const auto newPos = smoothedValue(curPos, _smoothedPos);
         _smoothedPos = newPos;
 
-        auto& playerLocalTransformPos = playerNodes->playerworldnode->local.translate;
+        auto& playerLocalTransformPos = playerNodes->playerWorldNode->local.translate;
         if (_notMoving && MatrixUtils::distanceNoSqrt2d(newPos.x - curPos.x, newPos.y - curPos.y, _lastAppliedLocalX, _lastAppliedLocalY) > kNotMovingResetDistanceSquared) {
             seedCurrentPosition(curPos);
             playerLocalTransformPos = zeroPoint();
@@ -179,8 +178,6 @@ namespace frik
             const float absValY = min(50, max(0.1f, abs(curPos.y - prevPos.y)));
             newPos.y = prevPos.y + _frameTime * ((curPos.y - prevPos.y) / (g_config.smoothingAmountHorizontal * (g_config.dampingMultiplierHorizontal / absValY) *
                                                                               (_notMoving ? g_config.stoppingMultiplierHorizontal : 1.0f)));
-        } else {
-            logger::sample("shouldn't be here!");
         }
 
         // Don't smooth vertical movement if jumping or in air as it will break the jump

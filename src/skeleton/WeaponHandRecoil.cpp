@@ -7,6 +7,7 @@
 #include "common/MatrixUtils.h"
 #include "common/Quaternion.h"
 #include "f4vr/F4VRUtils.h"
+#include "skeleton/QuaternionSmoothing.h"
 #include "utils.h"
 
 using namespace common;
@@ -102,7 +103,7 @@ namespace frik
      * Every path that ends without damping drops the smoothing history, so a later damped
      * burst always eases out from rest instead of resuming a stale value.
      */
-    void WeaponHandRecoil::onFrameUpdate(f4vr::PlayerNodes* playerNodes, const bool physicalPrimaryIsLeft)
+    void WeaponHandRecoil::onFrameUpdate(RE::VRPlayerNodes* playerNodes, const bool physicalPrimaryIsLeft)
     {
         _playerNodes = playerNodes;
         _physicalPrimaryIsLeft = physicalPrimaryIsLeft;
@@ -209,7 +210,7 @@ namespace frik
         const bool nativePrimaryIsLeft = isLeftHandedMode();
         if (isLeft != nativePrimaryIsLeft) {
             auto* const nativePrimaryWand = _playerNodes->primaryWandNode;
-            auto* const nativeOffhandWand = _playerNodes->SecondaryWandNode;
+            auto* const nativeOffhandWand = _playerNodes->secondaryWandNode;
             if (!nativePrimaryWand || !nativeOffhandWand || !isFiniteTransform(nativePrimaryWand->world) || !isFiniteTransform(nativeOffhandWand->world)) {
                 return false;
             }
@@ -256,7 +257,7 @@ namespace frik
         Quaternion smoothedRotation, targetRotation;
         smoothedRotation.fromMatrix(_smoothedKickLocal.rotate);
         targetRotation.fromMatrix(kick.rotate);
-        smoothedRotation.slerp(1 - rotationFactor, targetRotation);
+        smoothedRotation = slerpToward(smoothedRotation, targetRotation, std::clamp(1 - rotationFactor, 0.0f, 1.0f));
 
         RE::NiTransform smoothed = kick;
         smoothed.rotate = smoothedRotation.getMatrix();

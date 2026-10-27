@@ -74,8 +74,8 @@ Since v2.2 the table is **append-only**: FRIK only ever adds entries at the end 
 | --- | --- | --- |
 | `1` | 0.78 | The original 31-entry table (exact-size check at `initialize()`). |
 | `2` | 0.79 | Append-only rule; `getSkeletonGeneration`, `isInPowerArmor`; lifecycle messages carry `SkeletonLifecycleData`; scope providers: `setScopeProvider`, `clearScopeProvider`, `setLookingThroughScope`, `isLookingThroughScope`; `kScopeEnter` / `kScopeExit` events. |
-| `4` | 0.79.1 | Scope providers: the `PlacesScopeWidget` capability, and the scope rig (`ScopeParent`, scope camera) is carried with a weapon another mod holds in the other hand. No new table entries, so a v2.3 client needs no change. |
 | `3` | 0.79 | Frame phases: `registerFrameCallback`, `unregisterFrameCallback`; a hand transform published in `BeforeArmSolve` is solved in the same frame. Body reads: `getTrackedHandTransform`, `getBoneWorldTransform`, `getArmChain`; `getHandSolveResult`; `setOffHandGripping`; `setWeaponNodeParentHand` / `clearWeaponNodeParentHand` (and `blockPrimaryWeaponNodeOwnership` no longer flips the parent hand). |
+| `4` | 0.79.1 | Scope providers: the `PlacesScopeWidget` capability, and the scope rig (`ScopeParent`, scope camera) is carried with a weapon another mod holds in the other hand. No new table entries, so a v2.3 client needs no change. |
 
 > A client built against the v2.1 header refuses any FRIK from 0.79 on (its exact-size check fails with code `5`). Recopy the header once; after that no further recopy is ever forced.
 
@@ -92,7 +92,7 @@ FRIK broadcasts these as F4SE messages under `FRIK_F4SE_MOD_NAME`:
 | `LifecycleEvent` | Value | Meaning |
 | --- | --- | --- |
 | `kSkeletonReady` | `100` | A new skeleton is built and spatial calls are valid. Republish here. |
-| `kSkeletonDestroying` | `101` | The skeleton is about to go away; your registrations are being dropped. |
+| `kSkeletonDestroying` | `101` | The skeleton is about to go away; your registrations are being dropped. Sent for every skeleton FRIK created, including one released before its `kSkeletonReady` was reached. |
 | `kScopeEnter` | `102` | The looking-through-scope state turned on (v2.2, no payload; see [Scope providers](#scope-providers-v22)). |
 | `kScopeExit` | `103` | The looking-through-scope state turned off (v2.2, no payload). |
 
@@ -327,6 +327,14 @@ Providers survive skeleton rebuilds, like feature blocks, and capabilities are t
 
 Publish on the game update thread whenever the state changes; only a provider registered with `PublishesLookingThrough` may. `isLookingThroughScope` returns the state FRIK keyed on this frame. When it flips FRIK broadcasts `kScopeEnter` / `kScopeExit`.
 
+**The provider owns the stand-down, and FRIK will not do it for you.** The published state is merged across providers with a logical or, it survives skeleton rebuilds like the registration itself, and nothing times it out. A provider that publishes `true` and then misses its own exit edge — because a blocking menu or an unequip took the weapon out from under it — leaves FRIK scoped, and every behaviour keyed on the state stays in its scoped form with nothing the player can do about it: hand and recoil damping stay on the in-scope pair, the Pip-Boy stops opening by look-at or by grabbing the Attaboy (a button press still works, since only the gesture paths are gated), and in grip mode 1 the off-hand grip can no longer be let go by moving the hand away from the barrel. Publish `false` from every path that ends your scope state, not only from the one that normally does.
+
+The one place FRIK does it for you is the session boundary: starting a new game or loading a save forgets what every provider published, keeping every registration, because no provider can still know whether the player is looking through a scope whose weapon and 3D have just been replaced. Publish your next edge as usual afterwards. Treat it as the floor under a mistake, not as a stand-down you can rely on — between session loads, a missed edge is yours to fix.
+
+Three ways back if you suspect your own state is stale. Publish `false` — always correct, and the right answer when you know you are not scoped. Re-register with `setScopeProvider(tag, capabilities)` — a re-registering tag starts from not looking through and then publishes its own next edge; that is the contract, not an accident, and FRIK's unit tests pin it. Or, when you want the capabilities dropped as well, `clearScopeProvider(tag)` followed by `setScopeProvider(tag, capabilities)`.
+
+Prefer the bare re-registration of those last two: the two-call form leaves FRIK holding no provider for your tag between the calls, so the merged capabilities drop for that instant and a body-hiding decision landing in the gap could flash. Reach for it only when you actually want the capabilities reset, not as a routine refresh.
+
 BetterScopesVR is registered by FRIK itself as a `PublishesLookingThrough` provider when its plugin is detected, mapping its legacy message onto this state.
 
 `kScopeEnter` / `kScopeExit` are broadcast at the start of FRIK's frame, before any frame phase runs, so a callback in that frame already sees the new state.
@@ -401,7 +409,7 @@ World transform of any body bone by its skeleton name (`LArm_Hand`, `Spine2`, ..
 
 `bool getArmChain(Hand hand, ArmChainTransforms* outChain)`
 
-World transforms of the live arm nodes, shoulder to hand, in `ArmChainTransforms`. Bit `i` of `validMask` is set when bone `i` exists; `forearm2` / `forearm3` do not in power armor and read as identity. Valid after `AfterArmSolve`, final after `AfterWorldFinal`.
+World transforms of the live arm nodes, shoulder to hand, in `ArmChainTransforms`. Bit `i` of `validMask` is set when bone `i` exists; `forearm2` / `forearm3` do not in power armor and read as identity. Returns `false` with no skeleton or when no bone of the chain exists (`validMask` is then `0`). Valid after `AfterArmSolve`, final after `AfterWorldFinal`.
 
 ## State queries
 

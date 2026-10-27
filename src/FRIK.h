@@ -43,6 +43,11 @@ namespace frik
             return _weaponPosition.get();
         }
 
+        BoneSpheresHandler& getBoneSpheres()
+        {
+            return _boneSpheres;
+        }
+
         // Number of skeletons built this session; 0 before the first, +1 on every rebuild
         std::uint32_t getSkeletonGeneration() const
         {
@@ -284,8 +289,8 @@ namespace frik
 
     private:
         void initSkeleton();
-        // The real frame update. onFrameUpdate wraps it so the devbench bridge drains
-        // commands before it and publishes a snapshot after it on EVERY exit path.
+        // The real frame update. onFrameUpdate wraps it so the FrameBegin/FrameEnd phases pair up
+        // on EVERY exit path, including its early returns.
         void onFrameUpdateInner();
         void onGameMenuOpened(const std::string& name, bool isOpened);
         void releaseSkeleton();

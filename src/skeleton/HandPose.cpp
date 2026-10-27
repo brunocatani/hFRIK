@@ -12,10 +12,11 @@
 #include "HandPoseMath.h"
 #include "common/MatrixUtils.h"
 #include "common/Quaternion.h"
-#include "devbench/PerfProbe.h"
 #include "f4vr/BSFlattenedBoneTree.h"
 #include "f4vr/F4VRSkelly.h"
 #include "f4vr/F4VRUtils.h"
+#include "perf/Perf.h"
+#include "skeleton/QuaternionSmoothing.h"
 #include "utils.h"
 #include "vrcf/VRControllersManager.h"
 
@@ -102,6 +103,9 @@ namespace
         }
     }
 
+    // how fast a hand pose value chases its target, per second (both the palm axes and the bone rotations)
+    constexpr float HAND_POSE_BLEND_RATE = 7.0f;
+
     /**
      * Blend one palm axis toward its target and snap the tail to avoid endless tiny drift.
      */
@@ -112,7 +116,7 @@ namespace
             return;
         }
 
-        currentValue += (targetValue - currentValue) * std::clamp(frameTime * 7.0f, 0.0f, 1.0f);
+        currentValue += (targetValue - currentValue) * std::clamp(frameTime * HAND_POSE_BLEND_RATE, 0.0f, 1.0f);
         if (fEqual(currentValue, targetValue)) {
             currentValue = targetValue;
         }
@@ -374,8 +378,7 @@ namespace frik
      */
     void HandPose::onFrameUpdate(RE::NiNode* root, const float frameTime)
     {
-        static devbench::PerfProbe perf("HandPose::onFrameUpdate");
-        const auto timer = perf.scope();
+        F4CF_PERF_FUNCTION();
 
         const auto leftHandSource = resolveHandPoseSource(true);
         const auto rightHandSource = resolveHandPoseSource(false);
@@ -618,8 +621,8 @@ namespace frik
         auto& currentBone = _handBones.at(boneName);
         qc.fromMatrix(currentBone.rotate);
         qt.fromMatrix(targetRotation);
-        const float blend = std::clamp(frameTime * 7, -1.0f, 2.0f);
-        qc.slerp(blend, qt);
+        const float blend = std::clamp(frameTime * HAND_POSE_BLEND_RATE, -1.0f, 2.0f);
+        qc = slerpToward(qc, qt, blend);
         currentBone.rotate = qc.getMatrix();
     }
 

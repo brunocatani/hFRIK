@@ -5,12 +5,19 @@
 #include "FRIK.h"
 #include "f4sevr/PapyrusNativeFunctions.h"
 #include "f4sevr/PapyrusUtils.h"
+#include "perf/Perf.h"
 
 using namespace common;
 using namespace F4SEVR;
 
 namespace frik
 {
+    namespace
+    {
+        // about a second at 90 Hz: a rebuild's first frames can come before the new 3D holds the bone
+        constexpr std::uint32_t BONE_RESOLVE_FRAMES = 90;
+    }
+
     void BoneSpheresHandler::init()
     {
         if (_instance) {
@@ -68,8 +75,66 @@ namespace frik
 
     void BoneSpheresHandler::onFrameUpdate()
     {
+        F4CF_PERF_FUNCTION();
         detectBoneSphere();
         handleDebugBoneSpheres();
+    }
+
+    void BoneSpheresHandler::onSkeletonReleased()
+    {
+        // the nodes belong to the tree being released; the debug spheres go with it, so only the pointers are dropped here.
+        // HAZARD, inherited rather than introduced: releaseSkeleton can run off the game thread (docs/features-backlog.md,
+        // found by the perf work's Tracy captures), so this clear races the game thread's own liveBone() re-resolution. It
+        // is no worse than everything else releaseSkeleton already touches, and it is fixed for all of them by deferring the
+        // release to the next game-thread frame. Until then: a torn read here costs one frame of a stale or null bone, not
+        // a use-after-free, because the pointer is only ever read through liveBone and re-resolved by name.
+        // For the same reason this does NOT send BoneSphereEvent::Exit for a sticky sphere, although a script that got
+        // Enter then never hears Exit: dispatching a Papyrus event off the game thread is worse than the asymmetry.
+        for (const auto& sphere : _boneSphereRegisteredObjects | std::views::values) {
+            sphere->bone = nullptr;
+            sphere->debugSphere = nullptr;
+            sphere->stickyRight = false;
+            sphere->stickyLeft = false;
+        }
+    }
+
+    RE::NiNode* BoneSpheresHandler::findBoneNode(const char* name, const bool inPlayerTree)
+    {
+        if (inPlayerTree) {
+            // the skeleton FRIK just built first: while power armor is swapped the player's 3D can still hold the outgoing tree
+            if (const auto bone = f4vr::findNode(f4vr::getRootNode(), name)) {
+                return bone;
+            }
+            return f4vr::findNode(f4vr::getWorldRootNode(), name);
+        }
+        auto n = f4vr::getWorldRootNode();
+        if (!n) {
+            return nullptr;
+        }
+        if (const auto bone = f4vr::findNode(n, name)) {
+            return bone;
+        }
+        while (n->parent) {
+            n = n->parent;
+        }
+        return f4vr::findNode(n, name); // ObjectLODRoot
+    }
+
+    RE::NiNode* BoneSpheresHandler::liveBone(BoneSphere& sphere)
+    {
+        if (!sphere.bone && !sphere.boneName.empty()) {
+            const auto generation = g_frik.getSkeletonGeneration();
+            if (sphere.resolveGeneration != generation) {
+                sphere.resolveGeneration = generation;
+                sphere.resolveFramesLeft = BONE_RESOLVE_FRAMES;
+            }
+            if (sphere.resolveFramesLeft > 0) {
+                F4CF_PERF_SCOPE("resolveBoneSphereBone");
+                --sphere.resolveFramesLeft;
+                sphere.bone = findBoneNode(sphere.boneName.c_str(), sphere.inPlayerTree);
+            }
+        }
+        return sphere.bone;
     }
 
     std::uint32_t BoneSpheresHandler::registerBoneSphere(const float radius, const BSFixedString& bone)
@@ -109,6 +174,7 @@ namespace frik
 
         auto n = f4vr::getWorldRootNode();
         auto boneNode = f4vr::findNode(n, bone.c_str());
+        const bool inPlayerTree = boneNode != nullptr;
 
         if (!boneNode) {
             while (n->parent) {
@@ -130,6 +196,7 @@ namespace frik
         pos.Get(&offsetVec.z, 2);
 
         const auto sphere = new BoneSphere(radius, boneNode, offsetVec);
+        sphere->inPlayerTree = inPlayerTree;
         const std::uint32_t handle = _nextBoneSphereHandle++;
 
         _boneSphereRegisteredObjects[handle] = sphere;
@@ -191,6 +258,15 @@ namespace frik
         }
     }
 
+    std::vector<BoneSpheresHandler::SphereInfo> BoneSpheresHandler::getSphereInfos() const
+    {
+        std::vector<SphereInfo> infos;
+        for (const auto& [handle, sphere] : _boneSphereRegisteredObjects) {
+            infos.push_back({ handle, sphere->boneName, sphere->radius, sphere->bone != nullptr, sphere->turnOnDebugSpheres, sphere->debugSphere != nullptr });
+        }
+        return infos;
+    }
+
     /**
      * Bone sphere detection
      */
@@ -219,8 +295,12 @@ namespace frik
         }
 
         for (const auto& element : _boneSphereRegisteredObjects) {
-            RE::NiPoint3 offset = element.second->bone->world.rotate.Transpose() * (element.second->offset);
-            offset = element.second->bone->world.translate + offset;
+            const auto* bone = liveBone(*element.second);
+            if (!bone) {
+                continue;
+            }
+            RE::NiPoint3 offset = bone->world.rotate.Transpose() * (element.second->offset);
+            offset = bone->world.translate + offset;
 
             double dist = MatrixUtils::vec3Len(rFinger->world.translate - offset);
 
@@ -279,16 +359,45 @@ namespace frik
         }
     }
 
+    /**
+     * A skeleton release drops the debug sphere pointers. If the bone outlives the release, the node stays attached with no pointer
+     * left, so nothing can hide or remove it: toggling the spheres off or destroying one then acts only on the new sphere drawn next
+     * to it. Take any debug sphere no registration holds off this bone before attaching a new one.
+     */
+    void BoneSpheresHandler::detachOrphanDebugSpheres(RE::NiNode* bone) const
+    {
+        std::vector<RE::NiAVObject*> orphans;
+        for (const auto& child : bone->children) {
+            if (!child || std::string_view(child->name.c_str()) != DEBUG_SPHERE_NODE_NAME) {
+                continue;
+            }
+            const bool held = std::ranges::any_of(_boneSphereRegisteredObjects | std::views::values, [&](const BoneSphere* s) {
+                return s->debugSphere == child.get();
+            });
+            if (!held) {
+                orphans.push_back(child.get());
+            }
+        }
+        for (const auto orphan : orphans) {
+            logger::info("Bone sphere: removing an orphaned debug sphere from '{}'", bone->name.c_str());
+            bone->DetachChild(orphan);
+        }
+    }
+
     void BoneSpheresHandler::handleDebugBoneSpheres()
     {
         for (const auto& val : _boneSphereRegisteredObjects | std::views::values) {
-            RE::NiNode* bone = val->bone;
+            RE::NiNode* bone = liveBone(*val);
+            if (!bone) {
+                continue;
+            }
             RE::NiNode* sphere = val->debugSphere;
 
             if (val->turnOnDebugSpheres && !val->debugSphere) {
+                detachOrphanDebugSpheres(bone);
                 sphere = f4vr::getClonedNiNodeForNifFileSetName("1x1Sphere.nif");
                 if (sphere) {
-                    sphere->name = RE::BSFixedString("Sphere01");
+                    sphere->name = RE::BSFixedString(DEBUG_SPHERE_NODE_NAME);
 
                     bone->AttachChild(sphere, true);
                     sphere->flags.flags &= 0xfffffffffffffffe;
